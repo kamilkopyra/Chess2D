@@ -1,0 +1,55 @@
+# Foldery generowane przez Unity
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+
+# Asset Store tools
+/[Aa]ssets/AssetStoreTools*
+
+# Pliki generowane przez Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+UpgradeLog*.htm
+
+# Metadane debuggera
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+
+# Crash reporty
+sysinfo.txt
+
+# Buildy
+*.apk
+*.aab
+*.unitypackage
+*.app
+
+# Plastic SCM (Unity Version Control)
+.plastic/
+
+# Pliki systemowe
+.DS_Store
+Thumbs.db
+Desktop.ini

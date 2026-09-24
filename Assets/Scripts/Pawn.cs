@@ -1,0 +1,140 @@
+using UnityEngine;
+
+public class Pawn : ChessPiece
+{
+    public override bool[,] GetPossibleMoves()
+    {
+
+        BoardCreator boardCreator = FindFirstObjectByType<BoardCreator>();
+        
+        bool[,] moves = new bool[8, 8];
+
+
+        CheckEnPassant(boardCreator, moves);
+        if (isWhite)
+        {
+            if (hasBeenMoved == false)
+            {
+                CheckMoveForward(boardCreator, currentX, currentY + 1, moves);
+                DontJumpOver(boardCreator, currentX, currentY + 2, moves);
+
+
+            }
+            else CheckMoveForward(boardCreator, currentX, currentY + 1, moves);
+
+        }
+
+        else
+        {
+            if (hasBeenMoved == false)
+            {
+                CheckMoveForward(boardCreator, currentX, currentY - 1, moves);
+                DontJumpOver(boardCreator, currentX, currentY - 2, moves);
+
+
+            }
+            else CheckMoveForward(boardCreator, currentX, currentY - 1, moves);
+
+
+        }
+
+
+       
+        if (boardCreator != null)
+        {
+            if (isWhite)
+            {
+                // Sprawdzam czy pion nie jest na granicy planszy 
+                CheckTake(boardCreator,currentX + 1, currentY + 1, moves);
+                CheckTake(boardCreator,currentX - 1, currentY + 1, moves);
+            }
+            else
+            {
+                CheckTake(boardCreator,currentX + 1, currentY - 1, moves);
+                CheckTake(boardCreator,currentX - 1, currentY - 1, moves);
+            }
+
+        }
+
+        return moves;
+    }
+
+        
+        void CheckTake(BoardCreator boardCreator,int x, int y,bool[,] moves)
+        {
+            if (x >= 0 && x < 8 && y >= 0 && y < 8) // Zabezpieczenie przed wyjœciem poza planszê
+            {   
+
+                // Dodajê logikê bicia na ukos pionami (jeœli znajduje siê tam figura, to mogê zbiæ) 
+                if (boardCreator.board[x, y] != null)
+                {
+                    moves[x, y] = true;
+                }
+
+            }
+
+        }
+
+        void CheckMoveForward(BoardCreator boardCreator, int x, int y, bool[,] moves) 
+        {
+        if (x >= 0 && x < 8 && y >= 0 && y < 8)
+        {
+            if (boardCreator.board[x, y] == null)
+                moves[x, y] = true;
+        }
+        }
+
+        void DontJumpOver(BoardCreator boardCreator, int x, int y, bool[,] moves)
+        {
+            if (isWhite)
+            {
+                if (boardCreator.board[x, y] == null && boardCreator.board[x, y - 1] == null)
+                { moves[x, y] = true; }
+            }
+            else
+            {
+                if (boardCreator.board[x, y] == null && boardCreator.board[x, y + 1] == null)
+                { moves[x, y] = true; }
+
+            }
+        }
+
+        public void CheckEnPassant(BoardCreator board, bool[,] moves)
+        {
+            int x = currentX;
+            int y = currentY;
+
+            int direction = isWhite ? 1 : -1;
+
+            // Tylko jeœli pion stoi na 5. (bia³y) lub 4. (czarny) rzêdzie
+            if ((isWhite && y == 4) || (!isWhite && y == 3))
+            {
+                // Lewo
+                if (x > 0)
+                {
+                    ChessPiece left = board.board[x - 1, y];
+                    if (left is Pawn && left.isWhite != isWhite && left.justMadeFirstMove)
+                    {
+                        moves[x - 1, y + direction] = true;
+                    }
+                }
+
+                // Prawo
+                if (x < 7)
+                {
+                    ChessPiece right = board.board[x + 1, y];
+                    if (right is Pawn && right.isWhite != isWhite && right.justMadeFirstMove)
+                    {
+                        moves[x + 1, y + direction] = true;
+                    }
+                }
+            }
+        }
+
+
+}
+
+// Piony bij¹ tak jak powinny i poruszaj¹ siê prawid³owo. Muszê jeszcze dodaæ:
+// - en passant
+// - promocjê
+// ale to kiedy indziej
