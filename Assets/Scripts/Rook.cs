@@ -1,4 +1,4 @@
-using UnityEngine;
+ï»¿using UnityEngine;
 
 public class Rook : ChessPiece
 {
@@ -20,13 +20,13 @@ public class Rook : ChessPiece
             if (!CheckMove(board, i, currentY, moves)) break;
         }
 
-        // Góra
+        // GÃ³ra
         for (int j = currentY + 1; j < 8; j++)
         {
             if (!CheckMove(board, currentX, j, moves)) break;
         }
 
-        // Dó³
+        // DÃ³Å‚
         for (int j = currentY - 1; j >= 0; j--)
         {
             if (!CheckMove(board, currentX, j, moves)) break;
@@ -48,9 +48,9 @@ public class Rook : ChessPiece
         {
             if (target.isWhite != this.isWhite)
             {
-                moves[x, y] = true; // przeciwnik — mo¿na zbiæ
+                moves[x, y] = true; // przeciwnik â€” moÅ¼na zbiÄ‡
             }
-            return false; // napotkaliœmy przeszkodê - nie mo¿na przeskoczyæ
+            return false; // napotkaliÅ›my przeszkodÄ™ - nie moÅ¼na przeskoczyÄ‡
         }
     }
 }

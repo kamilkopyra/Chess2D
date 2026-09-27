@@ -1,4 +1,4 @@
-using UnityEngine;
+ï»¿using UnityEngine;
 
 public class Pawn : ChessPiece
 {
@@ -62,10 +62,10 @@ public class Pawn : ChessPiece
         
         void CheckTake(BoardCreator boardCreator,int x, int y,bool[,] moves)
         {
-            if (x >= 0 && x < 8 && y >= 0 && y < 8) // Zabezpieczenie przed wyjœciem poza planszê
+            if (x >= 0 && x < 8 && y >= 0 && y < 8) // Zabezpieczenie przed wyjÅ›ciem poza planszÄ™
             {   
 
-                // Dodajê logikê bicia na ukos pionami (jeœli znajduje siê tam figura, to mogê zbiæ) 
+                // DodajÄ™ logikÄ™ bicia na ukos pionami (jeÅ›li znajduje siÄ™ tam figura, to mogÄ™ zbiÄ‡) 
                 if (boardCreator.board[x, y] != null)
                 {
                     moves[x, y] = true;
@@ -106,7 +106,7 @@ public class Pawn : ChessPiece
 
             int direction = isWhite ? 1 : -1;
 
-            // Tylko jeœli pion stoi na 5. (bia³y) lub 4. (czarny) rzêdzie
+            // Tylko jeÅ›li pion stoi na 5. (biaÅ‚y) lub 4. (czarny) rzÄ™dzie
             if ((isWhite && y == 4) || (!isWhite && y == 3))
             {
                 // Lewo
@@ -134,7 +134,7 @@ public class Pawn : ChessPiece
 
 }
 
-// Piony bij¹ tak jak powinny i poruszaj¹ siê prawid³owo. Muszê jeszcze dodaæ:
+// Piony bijÄ… tak jak powinny i poruszajÄ… siÄ™ prawidÅ‚owo. MuszÄ™ jeszcze dodaÄ‡:
 // - en passant
-// - promocjê
+// - promocjÄ™
 // ale to kiedy indziej

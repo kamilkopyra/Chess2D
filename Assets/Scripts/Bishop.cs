@@ -1,4 +1,4 @@
-//using UnityEngine;
+ï»¿//using UnityEngine;
 
 //public class Bishop : ChessPiece
 //{
@@ -50,9 +50,9 @@
 //        {
 //            if (target.isWhite != this.isWhite)
 //            {
-//                moves[x, y] = true; // przeciwnik — mo¿na zbiæ
+//                moves[x, y] = true; // przeciwnik â€” moÅ¼na zbiÄ‡
 //            }
-//            return false; // napotkaliœmy przeszkodê - nie mo¿na przeskoczyæ
+//            return false; // napotkaliÅ›my przeszkodÄ™ - nie moÅ¼na przeskoczyÄ‡
 //        }
 //    }
 //}
@@ -115,14 +115,14 @@ public class Bishop : ChessPiece
         {
             if (target.isWhite != this.isWhite)
             {
-                moves[x, y] = true; // przeciwnik — mo¿na zbiæ
+                moves[x, y] = true; // przeciwnik â€” moÅ¼na zbiÄ‡
             }
-            return false; // napotkaliœmy przeszkodê - nie mo¿na przeskoczyæ
+            return false; // napotkaliÅ›my przeszkodÄ™ - nie moÅ¼na przeskoczyÄ‡
         }
     }
 }
 
-// Doda³em logikê ¿eby goñce nie mog³y przeskakiwaæ figur
+// DodaÅ‚em logikÄ™ Å¼eby goÅ„ce nie mogÅ‚y przeskakiwaÄ‡ figur
 
 
 

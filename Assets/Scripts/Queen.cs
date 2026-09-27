@@ -1,4 +1,4 @@
-using UnityEngine;
+ï»¿using UnityEngine;
 
 public class Queen : ChessPiece
 {
@@ -14,7 +14,7 @@ public class Queen : ChessPiece
         if (board == null) return moves;
 
 
-        // Ruchy Goñca
+        // Ruchy GoÅ„ca
         int i, j;
 
         for (i = currentX + 1, j = currentY + 1; i < 8 && j < 8; i++, j++)
@@ -36,7 +36,7 @@ public class Queen : ChessPiece
 
         moves[currentX, currentY] = false;
 
-        // Ruchy wie¿¹
+        // Ruchy wieÅ¼Ä…
 
         // Prawo
         for (int k = currentX + 1; k < 8; k++)
@@ -50,13 +50,13 @@ public class Queen : ChessPiece
             if (!CheckMoveR(board, k, currentY, moves)) break;
         }
 
-        // Góra
+        // GÃ³ra
         for (int l = currentY + 1; l < 8; l++)
         {
             if (!CheckMoveR(board, currentX, l, moves)) break;
         }
 
-        // Dó³
+        // DÃ³Å‚
         for (int l = currentY - 1; l >= 0; l--)
         {
             if (!CheckMoveR(board, currentX, l, moves)) break;
@@ -79,9 +79,9 @@ public class Queen : ChessPiece
         {
             if (target.isWhite != this.isWhite)
             {
-                moves[x, y] = true; // przeciwnik — mo¿na zbiæ
+                moves[x, y] = true; // przeciwnik â€” moÅ¼na zbiÄ‡
             }
-            return false; // napotkaliœmy przeszkodê - nie mo¿na przeskoczyæ
+            return false; // napotkaliÅ›my przeszkodÄ™ - nie moÅ¼na przeskoczyÄ‡
         }
     }
 
@@ -99,9 +99,9 @@ public class Queen : ChessPiece
         {
             if (target.isWhite != this.isWhite)
             {
-                moves[x, y] = true; // przeciwnik — mo¿na zbiæ
+                moves[x, y] = true; // przeciwnik â€” moÅ¼na zbiÄ‡
             }
-            return false; // napotkaliœmy przeszkodê - nie mo¿na przeskoczyæ
+            return false; // napotkaliÅ›my przeszkodÄ™ - nie moÅ¼na przeskoczyÄ‡
         }
     }
 }

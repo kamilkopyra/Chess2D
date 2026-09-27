@@ -1,4 +1,4 @@
-//using System.Collections.Generic;
+Ôªø//using System.Collections.Generic;
 //using UnityEngine;
 
 //public class LightAvailableMoves : MonoBehaviour
@@ -44,7 +44,7 @@ using UnityEngine;
 public class LightAvailableMoves : MonoBehaviour
 {
     public GameObject dotPrefab;  // Przypisz w Inspectorze prefab kropki
-    public GameObject redSquare;  // Prefab czerwonego podúwietlenia
+    public GameObject redSquare;  // Prefab czerwonego pod≈õwietlenia
 
     private List<GameObject> dots = new List<GameObject>();
     private List<GameObject> redSquares = new List<GameObject>();
@@ -56,7 +56,7 @@ public class LightAvailableMoves : MonoBehaviour
 
         if (dotPrefab == null || redSquare == null)
         {
-            Debug.LogError("Nie przypisano prefabÛw w Inspectorze!");
+            Debug.LogError("Nie przypisano prefab√≥w w Inspectorze!");
             return;
         }
 

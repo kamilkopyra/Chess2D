@@ -1,7 +1,7 @@
-using UnityEngine;
+ï»¿using UnityEngine;
 
 
-// Klasa przypisuj¹ca ka¿demu pionowi typ, kolor i aktualn¹ pozycjê
+// Klasa przypisujÄ…ca kaÅ¼demu pionowi typ, kolor i aktualnÄ… pozycjÄ™
 
 public abstract class ChessPiece : MonoBehaviour
 {
@@ -39,8 +39,8 @@ public abstract class ChessPiece : MonoBehaviour
 
     void OnMouseDown()
     {
-        Debug.Log($"Klikniêto: {type} (Prefab: {sourcePrefabName})\n" +
-                 $"Kolor: {(isWhite ? "Bia³y" : "Czarny")}\n" +
+        Debug.Log($"KlikniÄ™to: {type} (Prefab: {sourcePrefabName})\n" +
+                 $"Kolor: {(isWhite ? "BiaÅ‚y" : "Czarny")}\n" +
                  $"Pozycja: [{currentX},{currentY}]");
 
     }
@@ -60,7 +60,7 @@ public abstract class ChessPiece : MonoBehaviour
 
                 ChessPiece target = board.board[x, y];
 
-                // Nie mo¿esz zbiæ w³asnej figury
+                // Nie moÅ¼esz zbiÄ‡ wÅ‚asnej figury
                 if (target != null && target.isWhite == this.isWhite)
                     continue;
                 // Legalny ruch

@@ -1,4 +1,4 @@
-using UnityEngine;
+ï»¿using UnityEngine;
 
 public class KIng : ChessPiece
 {
@@ -58,7 +58,7 @@ public class KIng : ChessPiece
 
     private void CheckMove(int x, int y, bool[,] moves)
     {
-        if (x >= 0 && x < 8 && y >= 0 && y < 8) // Zabezpieczenie przed wyjœciem poza planszê
+        if (x >= 0 && x < 8 && y >= 0 && y < 8) // Zabezpieczenie przed wyjÅ›ciem poza planszÄ™
         {
             moves[x, y] = true;
 
@@ -141,6 +141,6 @@ public class KIng : ChessPiece
 }
 
 
-// Trzeba dodaæ roszadê
+// Trzeba dodaÄ‡ roszadÄ™
 
 

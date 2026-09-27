@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 public class Knight : ChessPiece
 {
@@ -15,7 +15,7 @@ public class Knight : ChessPiece
             int x = currentX + xOffsets[i];
             int y = currentY + yOffsets[i];
 
-            // Sprawd� czy ruch jest w granicach planszy
+            // Sprawdź czy ruch jest w granicach planszy
             if (x >= 0 && x < 8 && y >= 0 && y < 8)
             {
                 moves[x, y] = true;
