@@ -264,7 +264,6 @@ public class PieceMover : MonoBehaviour
                     if (attacks[king.currentX, king.currentY])
                     {
                         king.isChecked = true;
-                        Debug.Log("Szach");
                         return true;
                     }
                 }
@@ -317,7 +316,6 @@ public class PieceMover : MonoBehaviour
         {
             for (int j = 0; j < 8; j++)
             {
-                Debug.Log("Znaleziono obiekt");
                 ChessPiece piece = board.board[i, j];
 
                 if (piece != null && colorToCheck == piece.isWhite)
@@ -331,10 +329,7 @@ public class PieceMover : MonoBehaviour
 
                             if (moves[k, l] && WillKingBeSafe(piece, k, l))
                             {
-
-                                Debug.Log("Szach. Nie ma mata");
                                 return false; // istnieje ruch
-
                             }
                         }
 
@@ -347,8 +342,7 @@ public class PieceMover : MonoBehaviour
         }
 
 
-        Debug.Log("Mat. Koniec Gry");
-        return true; //Szach mat
+        return true; // brak legalnych ruchów: mat albo pat (rozstrzyga CheckGameEnd)
 
     }
 
