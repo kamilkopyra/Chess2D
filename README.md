@@ -1,6 +1,6 @@
 # Chess2D
 
-A 2D chess game for two players on one computer, built in Unity.
+A 2D chess game for two players on one computer, built in Unity. I made this project for learning purposes only
 
 ![Main window](gallery/game1.png)
 
