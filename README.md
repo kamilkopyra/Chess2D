@@ -2,6 +2,8 @@
 
 A 2D chess game for two players on one computer, built in Unity.
 
+![Main window](gallery/game1.png)
+
 ## Features
 
 - Full chess rules: castling, en passant, pawn promotion, check, checkmate, stalemate and the 50-move rule
