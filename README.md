@@ -65,8 +65,6 @@ It creates itself when the scene loads, so it doesn't need to be placed in the s
 
 - No draw by threefold repetition or insufficient material
 - No AI opponent, no clock, no undo
-- `StartGame.cs`, `EndGameUI.cs` and `PawnPromotionGraphics.cs` belong to the old uGUI interface and are no longer used.
-  They can be deleted once the old canvases are removed from the scene.
 
 ## Credits
 
