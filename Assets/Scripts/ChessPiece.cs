@@ -25,11 +25,47 @@ public abstract class ChessPiece : MonoBehaviour
     }
 
     public string sourcePrefabName;
-    public void SetPosition(int x, int y)
+
+    const float MoveDuration = 0.14f;
+    private Vector3 moveFrom, moveTo;
+    private float moveTime = -1f;
+
+    // animate = true: figura płynnie przesuwa się na nowe pole (zwykły ruch).
+    // Przy ustawianiu planszy i promocji pozycja zmienia się od razu.
+    public void SetPosition(int x, int y, bool animate = false)
     {
         currentX = x;
         currentY = y;
-        transform.position = new Vector3(x - 3.5f, y - 3.5f, 0);       
+        Vector3 target = new Vector3(x - 3.5f, y - 3.5f, 0);
+
+        if (animate && Application.isPlaying)
+        {
+            moveFrom = transform.position;
+            moveTo = target;
+            moveTime = 0f;
+            GetComponent<SpriteRenderer>().sortingOrder = BoardCreator.HintOrder + 1; // nad innymi figurami w trakcie ruchu
+        }
+        else
+        {
+            moveTime = -1f;
+            transform.position = target;
+        }
+    }
+
+    void Update()
+    {
+        if (moveTime < 0f) return;
+
+        moveTime += Time.deltaTime;
+        float t = Mathf.Clamp01(moveTime / MoveDuration);
+        t = 1f - (1f - t) * (1f - t); // ease-out
+        transform.position = Vector3.Lerp(moveFrom, moveTo, t);
+
+        if (t >= 1f)
+        {
+            moveTime = -1f;
+            GetComponent<SpriteRenderer>().sortingOrder = BoardCreator.PieceOrder;
+        }
     }
 
     public virtual bool[,] GetPossibleMoves()
@@ -42,14 +78,6 @@ public abstract class ChessPiece : MonoBehaviour
     public virtual bool[,] GetAttackedSquares()
     {
         return GetPossibleMoves();
-    }
-
-    void OnMouseDown()
-    {
-        Debug.Log($"Kliknięto: {type} (Prefab: {sourcePrefabName})\n" +
-                 $"Kolor: {(isWhite ? "Biały" : "Czarny")}\n" +
-                 $"Pozycja: [{currentX},{currentY}]");
-
     }
 
     public bool[,] GetLegalMoves()

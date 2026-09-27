@@ -1,39 +1,23 @@
 using UnityEngine;
 
-public class EndGame: MonoBehaviour
+// Pokazuje ekran końca gry (UIManager)
+public class EndGame : MonoBehaviour
 {
-
-
-
-    public static void EndTheGame() 
+    public static void Checkmate(bool winnerIsWhite)
     {
-        EndGameUI ui = GameObject.FindFirstObjectByType<EndGameUI>();
-
-        if (ui != null)
-        {
-            ui.ShowEndScreen();
-        }
-
+        UIManager.Instance?.ShowGameOver(
+            "Checkmate!",
+            winnerIsWhite ? "White wins" : "Black wins",
+            winnerIsWhite);
     }
+
     public static void Pat()
     {
-        EndGameUI ui = GameObject.FindFirstObjectByType<EndGameUI>();
-
-        if (ui != null)
-        {
-            ui.ShowPatScreen();
-        }
-
+        UIManager.Instance?.ShowGameOver("Stalemate", "Draw – no legal moves", null);
     }
-    public static void DrawBy50MovesRule() 
+
+    public static void DrawBy50MovesRule()
     {
-        EndGameUI ui = GameObject.FindFirstObjectByType<EndGameUI>();
-
-        if (ui != null)
-        {
-            ui.Show50RuleScreen();
-        }
-
+        UIManager.Instance?.ShowGameOver("Draw", "50-move rule", null);
     }
-
 }

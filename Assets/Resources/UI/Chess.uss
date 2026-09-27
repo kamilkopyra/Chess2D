@@ -1,0 +1,446 @@
+/* ===== Kolory i czcionki ===== */
+
+.chess-root {
+    --bg-card: #232428;
+    --bg-card-border: #34363C;
+    --bg-elevated: #2D2F34;
+    --bg-elevated-hover: #383A40;
+    --text: #EDEEF0;
+    --text-muted: #9A9CA3;
+    --accent: #81B64C;
+    --accent-hover: #93C75C;
+    --accent-dark: #5D8A31;
+    --danger: #E5484D;
+
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    color: var(--text);
+    -unity-font-definition: url("Fonts/Poppins-Regular.ttf");
+    font-size: 20px;
+}
+
+Label {
+    color: var(--text);
+    padding: 0;
+    margin: 0;
+}
+
+.semibold {
+    -unity-font-definition: url("Fonts/Poppins-SemiBold.ttf");
+}
+
+.bold {
+    -unity-font-definition: url("Fonts/Poppins-Bold.ttf");
+}
+
+.muted {
+    color: var(--text-muted);
+}
+
+/* ===== Pasek u góry (HUD) ===== */
+
+.hud {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 96px;
+    padding: 20px 32px 0 32px;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.hud__group {
+    flex-direction: row;
+    align-items: center;
+}
+
+.pill {
+    flex-direction: row;
+    align-items: center;
+    height: 52px;
+    padding: 0 22px 0 16px;
+    border-radius: 26px;
+    background-color: var(--bg-card);
+    border-width: 1px;
+    border-color: var(--bg-card-border);
+    transition-property: background-color, border-color;
+    transition-duration: 0.2s;
+}
+
+.pill--check {
+    background-color: rgb(74, 30, 33);
+    border-color: var(--danger);
+}
+
+.pill--result {
+    border-color: var(--accent);
+}
+
+.pill__dot {
+    width: 22px;
+    height: 22px;
+    border-radius: 11px;
+    margin-right: 12px;
+    border-width: 2px;
+    border-color: rgb(120, 122, 128);
+}
+
+.pill__dot--white {
+    background-color: #F4F4F4;
+}
+
+.pill__dot--black {
+    background-color: #111214;
+}
+
+.pill__label {
+    font-size: 20px;
+}
+
+/* ===== Przyciski ===== */
+
+.btn {
+    height: 56px;
+    padding: 0 28px;
+    margin: 6px 0;
+    border-radius: 14px;
+    align-items: center;
+    justify-content: center;
+    flex-direction: row;
+    transition-property: background-color, scale, translate;
+    transition-duration: 0.12s;
+    transition-timing-function: ease-out;
+}
+
+.btn:hover {
+    translate: 0 -2px;
+}
+
+.btn:active {
+    translate: 0 1px;
+    scale: 0.98 0.98;
+}
+
+.btn__label {
+    font-size: 21px;
+    -unity-font-definition: url("Fonts/Poppins-SemiBold.ttf");
+    -unity-text-align: middle-center;
+}
+
+.btn--primary {
+    background-color: var(--accent);
+    border-bottom-width: 4px;
+    border-color: var(--accent-dark);
+}
+
+.btn--primary:hover {
+    background-color: var(--accent-hover);
+}
+
+.btn--primary .btn__label {
+    color: #FFFFFF;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+}
+
+.btn--secondary {
+    background-color: var(--bg-elevated);
+    border-bottom-width: 4px;
+    border-color: #1E1F22;
+}
+
+.btn--secondary:hover {
+    background-color: var(--bg-elevated-hover);
+}
+
+.btn--ghost {
+    background-color: rgba(0, 0, 0, 0);
+}
+
+.btn--ghost .btn__label {
+    color: var(--text-muted);
+}
+
+.btn--ghost:hover .btn__label {
+    color: var(--text);
+}
+
+.btn--small {
+    height: 52px;
+    padding: 0 22px;
+    margin: 0 0 0 12px;
+    border-radius: 26px;
+    border-bottom-width: 0;
+    border-width: 1px;
+    border-color: var(--bg-card-border);
+    background-color: var(--bg-card);
+}
+
+.btn--small:hover {
+    background-color: var(--bg-elevated);
+}
+
+.btn--small .btn__label {
+    font-size: 18px;
+}
+
+/* ===== Nakładka i karty ===== */
+
+.overlay {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(10, 11, 13, 0.72);
+    opacity: 0;
+    transition-property: opacity;
+    transition-duration: 0.2s;
+}
+
+.overlay--visible {
+    opacity: 1;
+}
+
+.card {
+    background-color: var(--bg-card);
+    border-width: 1px;
+    border-color: var(--bg-card-border);
+    border-radius: 24px;
+    padding: 40px 48px;
+    align-items: stretch;
+    opacity: 0;
+    translate: 0 16px;
+    scale: 0.97 0.97;
+    transition-property: opacity, translate, scale;
+    transition-duration: 0.22s;
+    transition-timing-function: ease-out-cubic;
+}
+
+.card--shown {
+    opacity: 1;
+    translate: 0 0;
+    scale: 1 1;
+}
+
+.card--menu {
+    width: 460px;
+}
+
+.card--settings {
+    width: 860px;
+}
+
+.card--promotion {
+    align-items: center;
+}
+
+.card--gameover {
+    width: 480px;
+    align-items: stretch;
+}
+
+.title {
+    font-size: 30px;
+    -unity-font-definition: url("Fonts/Poppins-SemiBold.ttf");
+    -unity-text-align: middle-center;
+}
+
+.title--xl {
+    font-size: 56px;
+    -unity-font-definition: url("Fonts/Poppins-Bold.ttf");
+    letter-spacing: 1px;
+}
+
+.subtitle {
+    font-size: 19px;
+    color: var(--text-muted);
+    -unity-text-align: middle-center;
+    margin-top: 4px;
+    margin-bottom: 26px;
+}
+
+.hero {
+    flex-direction: row;
+    justify-content: center;
+    align-items: flex-end;
+    margin-bottom: 8px;
+}
+
+.piece-img {
+    -unity-background-scale-mode: scale-to-fit;
+}
+
+.hero .piece-img {
+    margin: 0 -6px;
+}
+
+.hero__main {
+    translate: 0 -8px;
+}
+
+/* ===== Ustawienia ===== */
+
+.section-title {
+    font-size: 15px;
+    -unity-font-definition: url("Fonts/Poppins-SemiBold.ttf");
+    color: var(--text-muted);
+    letter-spacing: 2px;
+    margin-top: 22px;
+    margin-bottom: 12px;
+}
+
+.option-grid {
+    flex-direction: row;
+    flex-wrap: wrap;
+    margin-right: -12px;
+}
+
+.option {
+    align-items: center;
+    padding: 12px 10px 10px 10px;
+    margin: 0 12px 12px 0;
+    border-radius: 16px;
+    border-width: 2px;
+    border-color: rgba(0, 0, 0, 0);
+    background-color: var(--bg-elevated);
+    transition-property: border-color, background-color, translate;
+    transition-duration: 0.15s;
+}
+
+.option:hover {
+    background-color: var(--bg-elevated-hover);
+    translate: 0 -2px;
+}
+
+.option--selected {
+    border-color: var(--accent);
+    background-color: #2F3A28;
+}
+
+.option--selected:hover {
+    background-color: #35432C;
+}
+
+.option__label {
+    font-size: 15px;
+    margin-top: 8px;
+    -unity-text-align: middle-center;
+}
+
+.option--theme {
+    width: 116px;
+}
+
+.option--set {
+    width: 148px;
+}
+
+.mini-board {
+    width: 84px;
+    height: 84px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.mini-board__square {
+    width: 42px;
+    height: 42px;
+}
+
+.set-preview {
+    flex-direction: row;
+    justify-content: center;
+    background-color: #3A3C42;
+    border-radius: 10px;
+    padding: 4px 6px;
+}
+
+.switch-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 18px;
+    margin-bottom: 10px;
+    border-radius: 14px;
+    background-color: var(--bg-elevated);
+}
+
+.switch-row:hover {
+    background-color: var(--bg-elevated-hover);
+}
+
+.switch {
+    width: 52px;
+    height: 30px;
+    border-radius: 15px;
+    padding: 3px;
+    background-color: #4A4C52;
+    transition-property: background-color;
+    transition-duration: 0.15s;
+}
+
+.switch__knob {
+    width: 24px;
+    height: 24px;
+    border-radius: 12px;
+    background-color: #FFFFFF;
+    transition-property: translate;
+    transition-duration: 0.15s;
+    transition-timing-function: ease-out;
+}
+
+.switch--on {
+    background-color: var(--accent);
+}
+
+.switch--on .switch__knob {
+    translate: 22px 0;
+}
+
+.settings-columns {
+    flex-direction: row;
+}
+
+.settings-footer {
+    flex-direction: row;
+    justify-content: flex-end;
+    margin-top: 16px;
+}
+
+.settings-footer .btn {
+    width: 200px;
+}
+
+/* ===== Promocja ===== */
+
+.promo-row {
+    flex-direction: row;
+    margin-top: 8px;
+}
+
+.promo-choice {
+    width: 124px;
+    height: 124px;
+    margin: 0 8px;
+    border-radius: 18px;
+    align-items: center;
+    justify-content: center;
+    border-width: 2px;
+    border-color: rgba(0, 0, 0, 0);
+    transition-property: scale, border-color;
+    transition-duration: 0.12s;
+}
+
+.promo-choice:hover {
+    scale: 1.06 1.06;
+    border-color: var(--accent);
+}

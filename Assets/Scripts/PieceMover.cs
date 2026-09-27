@@ -12,8 +12,12 @@ public class PieceMover : MonoBehaviour
     bool isWhiteTurn = true;
     private bool isWaitingForPromotion = false;
     private ChessPiece pieceWithFirstMove = null;
+    private bool isGameOver = false;
     private int halfMoveCounter = 0;
     private LightAvailableMoves lightManager;
+
+    public bool IsWhiteTurn => isWhiteTurn;
+    public bool IsGameOver => isGameOver;
 
 
 
@@ -24,14 +28,32 @@ public class PieceMover : MonoBehaviour
         lightManager = FindFirstObjectByType<LightAvailableMoves>();
     }
 
+    // Nowa partia (Rewanż / Graj z menu)
+    public void ResetGame()
+    {
+        isWhiteTurn = true;
+        isWaitingForPromotion = false;
+        isGameOver = false;
+        selectedPiece = null;
+        pieceWithFirstMove = null;
+        halfMoveCounter = 0;
+
+        FindFirstObjectByType<BoardCreator>().ResetBoard();
+        lightManager.ResetAll();
+        UIManager.Instance?.UpdateTurn(isWhiteTurn, false);
+    }
+
     
     void Update()
     {
 
-        if (isWaitingForPromotion) return;
+        if (isWaitingForPromotion || isGameOver) return;
 
         if (Input.GetMouseButtonDown(0))
         {
+            // Kliknięcia w menu i przyciski nie mogą przechodzić na planszę
+            if (UIManager.Instance != null && UIManager.Instance.BlocksBoardInput(Input.mousePosition)) return;
+
             Vector2 mouseWorldPos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
             Collider2D hit = Physics2D.OverlapPoint(mouseWorldPos);
 
@@ -49,13 +71,11 @@ public class PieceMover : MonoBehaviour
                         
                         if (clickedPiece.isWhite != isWhiteTurn)
                         {
-                            Debug.Log("Nie Twoja kolej.");
                             return;
                         }
 
                         selectedPiece = clickedPiece;
                         lightManager.LightSquares(selectedPiece);
-                        Debug.Log("Wybrano figurę: " + clickedPiece.name);
                     }
                     else
                     {
@@ -76,7 +96,7 @@ public class PieceMover : MonoBehaviour
                         {
                             //Kiedy zbijam
                             
-                            if (MovePiece(selectedPiece, clickedPiece.transform.position)) { isWhiteTurn = !isWhiteTurn; }
+                            MovePiece(selectedPiece, mouseWorldPos);
                             selectedPiece = null;
                             lightManager.ClearHighlights();
 
@@ -88,7 +108,7 @@ public class PieceMover : MonoBehaviour
                 {
                     // Kiedy klikam w planszę
                     
-                    if (MovePiece(selectedPiece, mouseWorldPos)) { isWhiteTurn = !isWhiteTurn; }
+                    MovePiece(selectedPiece, mouseWorldPos);
                     selectedPiece = null;
                     lightManager.ClearHighlights();
 
@@ -97,7 +117,7 @@ public class PieceMover : MonoBehaviour
             else if (selectedPiece != null)
             {
                 
-                if (MovePiece(selectedPiece, mouseWorldPos)) { isWhiteTurn = !isWhiteTurn; }
+                MovePiece(selectedPiece, mouseWorldPos);
                 selectedPiece = null; // null dla odznaczenia obecnego wyboru
                 lightManager.ClearHighlights();
 
@@ -165,7 +185,7 @@ public class PieceMover : MonoBehaviour
             // aktualizacja matematycznej reprezentacji planszy
             boardCreator.board[oldX, oldY] = null;
             boardCreator.board[newX, newY] = piece;
-            piece.SetPosition(newX, newY);
+            piece.SetPosition(newX, newY, animate: true);
 
             // Flaga dla en passant tylko przy skoku piona o dwa pola
             if (piece is Pawn && Mathf.Abs(newY - oldY) == 2)
@@ -177,6 +197,8 @@ public class PieceMover : MonoBehaviour
         }
 
         selectedPiece = null;
+        isWhiteTurn = !piece.isWhite;
+        lightManager.ShowLastMove(oldX, oldY, piece.currentX, piece.currentY);
 
         // Promocja: mat/pat sprawdzany po wyborze figury (w PromotePawn).
         // Ruch pionem zawsze zeruje licznik 50 ruchów.
@@ -199,22 +221,31 @@ public class PieceMover : MonoBehaviour
         bool noMoves = IsItCheckmate(colorToMove);
         bool inCheck = IsKingInCheck(colorToMove); // na końcu, żeby flaga isChecked króla była aktualna
 
+        lightManager.ShowCheck(inCheck ? FindKing(colorToMove) : null);
+        UIManager.Instance?.UpdateTurn(colorToMove, inCheck);
+
         if (noMoves && inCheck)
         {
             Debug.Log("Szach Mat. Koniec Gry");
-            EndGame.EndTheGame();
+            isGameOver = true;
+            EndGame.Checkmate(winnerIsWhite: !colorToMove);
         }
         else if (noMoves)
         {
             Debug.Log("Pat... Koniec Gry");
+            isGameOver = true;
             EndGame.Pat();
-        }
-        else if (inCheck)
-        {
-            Debug.Log("Szach");
         }
 
         return noMoves;
+    }
+
+    ChessPiece FindKing(bool isWhite)
+    {
+        BoardCreator board = FindFirstObjectByType<BoardCreator>();
+        foreach (ChessPiece piece in board.board)
+            if (piece is KIng && piece.isWhite == isWhite) return piece;
+        return null;
     }
 
 
@@ -364,7 +395,6 @@ public class PieceMover : MonoBehaviour
             {
                 isWaitingForPromotion = true;
                
-                PawnPromotionUI promotionUI = FindFirstObjectByType<PawnPromotionUI>();
                 BoardCreator board = FindFirstObjectByType<BoardCreator>();
 
                 // Zatrzymaj pozycję i kolor przed zniszczeniem
@@ -372,7 +402,7 @@ public class PieceMover : MonoBehaviour
                 int y = pawn.currentY;
                 bool isWhite = pawn.isWhite;
 
-                promotionUI.Show(isWhite, pieceName =>
+                UIManager.Instance.ShowPromotion(isWhite, pieceName =>
                 {
                     // Usuń pionka dopiero po wyborze
                     board.board[x, y] = null;
@@ -437,11 +467,11 @@ public class PieceMover : MonoBehaviour
             {
                 board.board[4, 0] = null;
                 board.board[2, 0] = king;
-                king.SetPosition(2, 0);
+                king.SetPosition(2, 0, animate: true);
 
                 board.board[0, 0] = null;
                 board.board[3, 0] = r;
-                r.SetPosition(3, 0);
+                r.SetPosition(3, 0, animate: true);
 
                 king.hasBeenMoved = true;
                 r.hasBeenMoved = true;
@@ -457,11 +487,11 @@ public class PieceMover : MonoBehaviour
             {
                 board.board[4, 0] = null;
                 board.board[6, 0] = king;
-                king.SetPosition(6, 0);
+                king.SetPosition(6, 0, animate: true);
 
                 board.board[7, 0] = null;
                 board.board[5, 0] = r;
-                r.SetPosition(5, 0);
+                r.SetPosition(5, 0, animate: true);
 
                 king.hasBeenMoved = true;
                 r.hasBeenMoved = true;
@@ -477,11 +507,11 @@ public class PieceMover : MonoBehaviour
             {
                 board.board[4, 7] = null;
                 board.board[2, 7] = king;
-                king.SetPosition(2, 7);
+                king.SetPosition(2, 7, animate: true);
 
                 board.board[0, 7] = null;
                 board.board[3, 7] = r;
-                r.SetPosition(3, 7);
+                r.SetPosition(3, 7, animate: true);
 
                 king.hasBeenMoved = true;
                 r.hasBeenMoved = true;
@@ -497,11 +527,11 @@ public class PieceMover : MonoBehaviour
             {
                 board.board[4, 7] = null;
                 board.board[6, 7] = king;
-                king.SetPosition(6, 7);
+                king.SetPosition(6, 7, animate: true);
 
                 board.board[7, 7] = null;
                 board.board[5, 7] = r;
-                r.SetPosition(5, 7);
+                r.SetPosition(5, 7, animate: true);
 
                 king.hasBeenMoved = true;
                 r.hasBeenMoved = true;
@@ -550,6 +580,7 @@ public class PieceMover : MonoBehaviour
         if (halfMoveCounter >= 100)
         {
             Debug.Log("Remis przez regułę 50 posunięć");
+            isGameOver = true;
             EndGame.DrawBy50MovesRule();
         }
     }
