@@ -178,11 +178,17 @@ public class PieceMover : MonoBehaviour
 
         selectedPiece = null;
 
+        // Promocja: mat/pat sprawdzany po wyborze figury (w PromotePawn).
+        // Ruch pionem zawsze zeruje licznik 50 ruchów.
+        if (PromotePawn(piece))
+        {
+            halfMoveCounter = 0;
+            return true;
+        }
+
         // Mat i pat mają pierwszeństwo przed regułą 50 ruchów
         bool gameOver = CheckGameEnd(!piece.isWhite);
         if (!gameOver) Update50MoveRule(piece is Pawn || wasCapture);
-
-        PromotePawn(piece);
 
         return true;
     }
@@ -354,7 +360,8 @@ public class PieceMover : MonoBehaviour
 
     // Funkcje związane z promocją piona
     
-    void PromotePawn(ChessPiece pawn)
+    // Zwraca true, jeśli czekamy na wybór figury (wtedy koniec gry sprawdzamy dopiero po wyborze)
+    bool PromotePawn(ChessPiece pawn)
     {
         if (pawn is Pawn)
         {
@@ -379,9 +386,14 @@ public class PieceMover : MonoBehaviour
 
                     SpawnPromotedPiece(pieceName, isWhite, x, y);
                     isWaitingForPromotion = false;
+
+                    // Dopiero teraz, bo nowa figura może dać mata albo pata
+                    CheckGameEnd(!isWhite);
                 });
+                return true;
             }
         }
+        return false;
     }
 
     void SpawnPromotedPiece(string pieceName, bool isWhite, int x, int y)
@@ -409,18 +421,10 @@ public class PieceMover : MonoBehaviour
                 return;
         }
 
-        GameObject newPiece = Instantiate(
-            prefab,
-            new Vector3(x - 3.5f, y - 3.5f),
-            Quaternion.identity
-        );
-
-        ChessPiece newChessPiece = newPiece.GetComponent<ChessPiece>();
-        newChessPiece.SetPosition(x, y);
-        newChessPiece.isWhite = isWhite;
+        // CreatePiece ustawia też typ, nazwę, rodzica i sortingOrder (żeby figura nie chowała się pod polami)
+        ChessPiece newChessPiece = board.CreatePiece(prefab, x, y);
+        newChessPiece.hasBeenMoved = true;
         board.board[x, y] = newChessPiece;
-
-  
     }
 
     

@@ -47,7 +47,7 @@ public class BoardCreator : MonoBehaviour
         }
     }
 
-    ChessPiece CreatePiece(GameObject piecePrefab, int x, int y)
+    public ChessPiece CreatePiece(GameObject piecePrefab, int x, int y)
     {
         GameObject pieceObject = Instantiate(
             piecePrefab,
