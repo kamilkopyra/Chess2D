@@ -13,8 +13,6 @@ public class PieceMover : MonoBehaviour
     private bool isWaitingForPromotion = false;
     private ChessPiece pieceWithFirstMove = null;
     private int halfMoveCounter = 0;
-    private int numberOfPieces = 32;
-    private int previousNumberOfPieces = 32;
     private LightAvailableMoves lightManager;
 
 
@@ -78,7 +76,7 @@ public class PieceMover : MonoBehaviour
                         {
                             //Kiedy zbijam
                             
-                            if (MovePiece(selectedPiece, clickedPiece.transform.position)) { isWhiteTurn = !isWhiteTurn;  reset50Rule(selectedPiece); }
+                            if (MovePiece(selectedPiece, clickedPiece.transform.position)) { isWhiteTurn = !isWhiteTurn; }
                             selectedPiece = null;
                             lightManager.ClearHighlights();
 
@@ -90,7 +88,7 @@ public class PieceMover : MonoBehaviour
                 {
                     // Kiedy klikam w planszę
                     
-                    if (MovePiece(selectedPiece, mouseWorldPos)) { isWhiteTurn = !isWhiteTurn;  reset50Rule(selectedPiece); }
+                    if (MovePiece(selectedPiece, mouseWorldPos)) { isWhiteTurn = !isWhiteTurn; }
                     selectedPiece = null;
                     lightManager.ClearHighlights();
 
@@ -99,7 +97,7 @@ public class PieceMover : MonoBehaviour
             else if (selectedPiece != null)
             {
                 
-                if (MovePiece(selectedPiece, mouseWorldPos)) { isWhiteTurn = !isWhiteTurn; reset50Rule(selectedPiece);  }
+                if (MovePiece(selectedPiece, mouseWorldPos)) { isWhiteTurn = !isWhiteTurn; }
                 selectedPiece = null; // null dla odznaczenia obecnego wyboru
                 lightManager.ClearHighlights();
 
@@ -117,125 +115,100 @@ public class PieceMover : MonoBehaviour
         int newX = Mathf.RoundToInt(worldPosition.x + 3.5f);
         int newY = Mathf.RoundToInt(worldPosition.y + 3.5f);
 
-        bool[,] moves = piece.GetPossibleMoves();
-        bool check;
-        
+        if (newX < xmin || newX > xmax || newY < ymin || newY > ymax) return false;
 
-        if (newX >= xmin && newX <= xmax && newY >= ymin && newY <= ymax && moves[newX, newY])
+        // GetLegalMoves odrzuca pola z własnymi figurami, więc kliknięcie we własną figurę
+        // (np. gdy trafimy w collider pola zamiast figury) nic nie zmienia.
+        // Musi być sprawdzone PRZED wyczyszczeniem flagi en passant, inaczej bicie w przelocie zniknie z listy.
+        bool[,] moves = piece.GetLegalMoves();
+        if (!moves[newX, newY]) return false;
+
+        if (!WillKingBeSafe(piece, newX, newY))
         {
-            if (!WillKingBeSafe(piece, newX, newY))
-            {
-                Debug.Log("Nie możesz wykonać tego ruchu – król nadal byłby w szachu.");
-                return false;
-            }
+            Debug.Log("Nie możesz wykonać tego ruchu – król nadal byłby w szachu.");
+            return false;
+        }
 
-            if (pieceWithFirstMove != null)
-                pieceWithFirstMove.justMadeFirstMove = false;
+        BoardCreator boardCreator = FindFirstObjectByType<BoardCreator>();
+        if (boardCreator == null) return false;
 
+        // Od tego miejsca ruch jest legalny i na pewno zostanie wykonany
 
-            BoardCreator boardCreator = FindFirstObjectByType<BoardCreator>();
-            if (boardCreator == null) return false;
+        // Bicie w przelocie jest możliwe tylko w ruchu zaraz po skoku piona o dwa pola
+        if (pieceWithFirstMove != null)
+        {
+            pieceWithFirstMove.justMadeFirstMove = false;
+            pieceWithFirstMove = null;
+        }
 
-            int oldX = piece.currentX;
-            int oldY = piece.currentY;
-            ChessPiece targetPiece = boardCreator.board[newX, newY]; // aktualizacja matematycznej reprezentacji planszy
-            
-            
-            if (MakeCastle(piece, newX, newY)) { return true;  }
+        int oldX = piece.currentX;
+        int oldY = piece.currentY;
+        bool wasCapture = false;
+
+        if (!MakeCastle(piece, newX, newY))
+        {
+            ChessPiece targetPiece = boardCreator.board[newX, newY];
+
             if (piece is Pawn && targetPiece == null && newX != oldX)
             {
                 CheckIfenPassant(piece, newX, newY, boardCreator);
+                wasCapture = true;
             }
-            // Jeśli pole docelowe jest puste
-            if (targetPiece == null)
+
+            if (targetPiece != null)
             {
-                
-                MakeCastle(piece, newX, newY);
-                boardCreator.board[oldX, oldY] = null;
-                boardCreator.board[newX, newY] = piece;
-                piece.SetPosition(newX, newY);
-                Debug.Log($"Przeniesiono {piece.name} na [{newX}, {newY}]");
-                selectedPiece = null;
-                
-               //Sprawdzam szachy
-                piece.justMadeFirstMove = false;
-                if (piece.hasBeenMoved == false) { piece.justMadeFirstMove = true; pieceWithFirstMove = piece; }
-                piece.hasBeenMoved = true;
-
-
-
-                check = IsKingInCheck(!piece.isWhite);
-                if (check)  
-                { if (IsItCheckmate(!piece.isWhite)) { Debug.Log("Szach Mat. Koniec Gry"); EndGame.EndTheGame(); } }
-
-                // sprawdzenie pata
-                else if (!check)
-                { if (IsItCheckmate(!piece.isWhite)) { Debug.Log("Pat... Koniec Gry"); EndGame.Pat();  } }
-                
-                IsKingInCheck(!piece.isWhite);
-                PromotePawn(piece);
-                
-
-                return true;
-            }
-            // Jeśli na polu docelowym jest figura przeciwnika
-            else if (targetPiece.isWhite != piece.isWhite)
-            {
-                boardCreator.board[oldX, oldY] = null;
-                boardCreator.board[newX, newY] = piece;
-
                 Destroy(targetPiece.gameObject); // Usuwam figurę przeciwnika
-                piece.SetPosition(newX, newY);
                 Debug.Log($"{piece.name} bije {targetPiece.name} na [{newX}, {newY}]");
-                selectedPiece = null;
-
-                piece.justMadeFirstMove = false;
-                if (piece.hasBeenMoved == false) { piece.justMadeFirstMove = true; pieceWithFirstMove = piece; }
-                piece.hasBeenMoved = true;
-
-                //Sprawdzam szachy
-
-                //sprawdzam mata
-                bool inCheck = IsKingInCheck(!piece.isWhite);
-                bool checkmate = IsItCheckmate(!piece.isWhite);
-
-                if (inCheck && checkmate)
-                {
-                    Debug.Log("Szach Mat. Koniec Gry");
-                    EndGame.EndTheGame();
-                }
-                else if (!inCheck && checkmate)
-                {
-                    Debug.Log("Pat... Koniec Gry");
-                    EndGame.Pat();
-                }
-                else if (inCheck)
-                {
-                    Debug.Log("Szach");
-                }
-
-
-                PromotePawn(piece);
-               
-
-                return true;
+                wasCapture = true;
             }
 
-            // Jeśli próbujemy zbić własną figurę
-            else
+            // aktualizacja matematycznej reprezentacji planszy
+            boardCreator.board[oldX, oldY] = null;
+            boardCreator.board[newX, newY] = piece;
+            piece.SetPosition(newX, newY);
+
+            // Flaga dla en passant tylko przy skoku piona o dwa pola
+            if (piece is Pawn && Mathf.Abs(newY - oldY) == 2)
             {
-                Debug.Log("Nie możesz zbić własnej figury!");
-                selectedPiece = null;
-                piece.hasBeenMoved = true;
-                return false;
+                piece.justMadeFirstMove = true;
+                pieceWithFirstMove = piece;
             }
-
+            piece.hasBeenMoved = true;
         }
 
-        return false;
+        selectedPiece = null;
 
+        // Mat i pat mają pierwszeństwo przed regułą 50 ruchów
+        bool gameOver = CheckGameEnd(!piece.isWhite);
+        if (!gameOver) Update50MoveRule(piece is Pawn || wasCapture);
 
+        PromotePawn(piece);
 
+        return true;
+    }
+
+    // Sprawdza mata, pata i szacha dla strony, która ma teraz ruch. Zwraca true, jeśli gra się skończyła.
+    bool CheckGameEnd(bool colorToMove)
+    {
+        bool noMoves = IsItCheckmate(colorToMove);
+        bool inCheck = IsKingInCheck(colorToMove); // na końcu, żeby flaga isChecked króla była aktualna
+
+        if (noMoves && inCheck)
+        {
+            Debug.Log("Szach Mat. Koniec Gry");
+            EndGame.EndTheGame();
+        }
+        else if (noMoves)
+        {
+            Debug.Log("Pat... Koniec Gry");
+            EndGame.Pat();
+        }
+        else if (inCheck)
+        {
+            Debug.Log("Szach");
+        }
+
+        return noMoves;
     }
 
 
@@ -548,7 +521,7 @@ public class PieceMover : MonoBehaviour
 
             if (boardCreator.board[newX, newY] == null && newX != pawn.currentX) // tzn. że wykryto enPassant
             { 
-                int dir = isWhiteTurn ? -1 : 1;
+                int dir = pawn.isWhite ? -1 : 1;
                 ChessPiece capturedPawn = boardCreator.board[newX,newY + dir];
                 Destroy(capturedPawn.gameObject);
                 boardCreator.board[newX, newY + dir] = null;
@@ -561,12 +534,12 @@ public class PieceMover : MonoBehaviour
     }
 
 
-    private void reset50Rule(ChessPiece piece)
+    // Informację o biciu dostajemy z MovePiece, bo Destroy() usuwa obiekt dopiero
+    // na końcu klatki i liczenie figur na scenie nie widziało bicia
+    private void Update50MoveRule(bool pawnMoveOrCapture)
     {
-        numberOfPieces = FindObjectsOfType<ChessPiece>().Length;
-
         // Jeśli ruch pionkiem albo było bicie, resetuj licznik
-        if (piece is Pawn || numberOfPieces != previousNumberOfPieces)
+        if (pawnMoveOrCapture)
         {
             halfMoveCounter = 0;
         }
@@ -580,8 +553,6 @@ public class PieceMover : MonoBehaviour
             Debug.Log("Remis przez regułę 50 posunięć");
             EndGame.DrawBy50MovesRule();
         }
-
-        previousNumberOfPieces = numberOfPieces;
     }
 
 
