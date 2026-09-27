@@ -2,6 +2,9 @@
 
 A 2D chess game for two players on one computer, built in Unity. I made this project for learning purposes only
 
+Version 1.0 lacks a lot of stuff. I've started this project as an excercise but now I figured it might be a cool idea to try building my own chess engine.
+The project needs refactoring to be able to build a chess engine
+
 ![Main window](gallery/game1.png)
 
 ## Features
