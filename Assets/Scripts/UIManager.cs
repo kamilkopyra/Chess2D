@@ -43,8 +43,8 @@ public class UIManager : MonoBehaviour
     private Label gameOverTitle, gameOverSubtitle;
 
     // Obrazki figur, które zmieniają się razem z wybranym zestawem
-    private readonly List<(VisualElement element, ChessPiece.PieceType type, bool isWhite)> livePieceImages =
-        new List<(VisualElement, ChessPiece.PieceType, bool)>();
+    private readonly List<(VisualElement element, ChessEngine.PieceType type, bool isWhite)> livePieceImages =
+        new List<(VisualElement, ChessEngine.PieceType, bool)>();
 
     void Awake()
     {
@@ -127,7 +127,7 @@ public class UIManager : MonoBehaviour
         turnLabel.text = inCheck ? $"Check!  {side}" : side;
     }
 
-    public void ShowPromotion(bool isWhite, Action<string> onChosen)
+    public void ShowPromotion(bool isWhite, Action<ChessEngine.PieceType> onChosen)
     {
         promotionCard.Clear();
 
@@ -145,15 +145,15 @@ public class UIManager : MonoBehaviour
 
         var choices = new[]
         {
-            ("Queen", ChessPiece.PieceType.Queen),
-            ("Rook", ChessPiece.PieceType.Rook),
-            ("Bishop", ChessPiece.PieceType.Bishop),
-            ("Knight", ChessPiece.PieceType.Knight),
+            ChessEngine.PieceType.Queen,
+            ChessEngine.PieceType.Rook,
+            ChessEngine.PieceType.Bishop,
+            ChessEngine.PieceType.Knight,
         };
 
         for (int i = 0; i < choices.Length; i++)
         {
-            (string pieceName, ChessPiece.PieceType type) = choices[i];
+            ChessEngine.PieceType type = choices[i];
 
             var choice = new VisualElement();
             choice.AddToClassList("promo-choice");
@@ -163,7 +163,7 @@ public class UIManager : MonoBehaviour
             choice.AddManipulator(new Clickable(() =>
             {
                 CloseOverlay();
-                onChosen(pieceName);
+                onChosen(type);
             }));
             row.Add(choice);
         }
@@ -180,12 +180,12 @@ public class UIManager : MonoBehaviour
         gameOverHero.Clear();
         if (winnerIsWhite.HasValue)
         {
-            gameOverHero.Add(PieceImage(GameSettings.GetPieceSprite(ChessPiece.PieceType.King, winnerIsWhite.Value), 128));
+            gameOverHero.Add(PieceImage(GameSettings.GetPieceSprite(ChessEngine.PieceType.King, winnerIsWhite.Value), 128));
         }
         else
         {
-            gameOverHero.Add(PieceImage(GameSettings.GetPieceSprite(ChessPiece.PieceType.King, true), 112));
-            gameOverHero.Add(PieceImage(GameSettings.GetPieceSprite(ChessPiece.PieceType.King, false), 112));
+            gameOverHero.Add(PieceImage(GameSettings.GetPieceSprite(ChessEngine.PieceType.King, true), 112));
+            gameOverHero.Add(PieceImage(GameSettings.GetPieceSprite(ChessEngine.PieceType.King, false), 112));
         }
 
         // Wynik zostaje też w pasku u góry, gdy gracz wybierze "View board"
@@ -233,11 +233,11 @@ public class UIManager : MonoBehaviour
 
         var hero = new VisualElement();
         hero.AddToClassList("hero");
-        hero.Add(LivePieceImage(ChessPiece.PieceType.Knight, false, 84));
-        var king = LivePieceImage(ChessPiece.PieceType.King, true, 112);
+        hero.Add(LivePieceImage(ChessEngine.PieceType.Knight, false, 84));
+        var king = LivePieceImage(ChessEngine.PieceType.King, true, 112);
         king.AddToClassList("hero__main");
         hero.Add(king);
-        hero.Add(LivePieceImage(ChessPiece.PieceType.Knight, true, 84));
+        hero.Add(LivePieceImage(ChessEngine.PieceType.Knight, true, 84));
         menuCard.Add(hero);
 
         var title = new Label("Chess");
@@ -305,8 +305,8 @@ public class UIManager : MonoBehaviour
             var option = NewOption("option--set", () => GameSettings.PieceSetIndex = index);
             var preview = new VisualElement { pickingMode = PickingMode.Ignore };
             preview.AddToClassList("set-preview");
-            preview.Add(PieceImage(GameSettings.GetPieceSprite(ChessPiece.PieceType.Knight, true, set), 60));
-            preview.Add(PieceImage(GameSettings.GetPieceSprite(ChessPiece.PieceType.Queen, false, set), 60));
+            preview.Add(PieceImage(GameSettings.GetPieceSprite(ChessEngine.PieceType.Knight, true, set), 60));
+            preview.Add(PieceImage(GameSettings.GetPieceSprite(ChessEngine.PieceType.Queen, false, set), 60));
             option.Add(preview);
             option.Add(OptionLabel(set.Name));
             setGrid.Add(option);
@@ -508,7 +508,7 @@ public class UIManager : MonoBehaviour
         return image;
     }
 
-    VisualElement LivePieceImage(ChessPiece.PieceType type, bool isWhite, float size)
+    VisualElement LivePieceImage(ChessEngine.PieceType type, bool isWhite, float size)
     {
         var image = PieceImage(GameSettings.GetPieceSprite(type, isWhite), size);
         livePieceImages.Add((image, type, isWhite));

@@ -1,23 +1,31 @@
-using UnityEngine;
+using ChessEngine;
 
-// Pokazuje ekran końca gry (UIManager)
-public class EndGame : MonoBehaviour
+// Tłumaczy wynik partii z silnika na ekran końca gry (UIManager)
+public static class EndGame
 {
-    public static void Checkmate(bool winnerIsWhite)
+    // winner ma znaczenie tylko przy macie
+    public static void Show(GameStatus status, Side winner)
     {
-        UIManager.Instance?.ShowGameOver(
-            "Checkmate!",
-            winnerIsWhite ? "White wins" : "Black wins",
-            winnerIsWhite);
-    }
+        var ui = UIManager.Instance;
+        if (ui == null) return;
 
-    public static void Pat()
-    {
-        UIManager.Instance?.ShowGameOver("Stalemate", "Draw – no legal moves", null);
-    }
-
-    public static void DrawBy50MovesRule()
-    {
-        UIManager.Instance?.ShowGameOver("Draw", "50-move rule", null);
+        switch (status)
+        {
+            case GameStatus.Checkmate:
+                ui.ShowGameOver("Checkmate!", winner == Side.White ? "White wins" : "Black wins", winner == Side.White);
+                break;
+            case GameStatus.Stalemate:
+                ui.ShowGameOver("Stalemate", "Draw – no legal moves", null);
+                break;
+            case GameStatus.FiftyMoveRule:
+                ui.ShowGameOver("Draw", "50-move rule", null);
+                break;
+            case GameStatus.ThreefoldRepetition:
+                ui.ShowGameOver("Draw", "Threefold repetition", null);
+                break;
+            case GameStatus.InsufficientMaterial:
+                ui.ShowGameOver("Draw", "Insufficient material", null);
+                break;
+        }
     }
 }

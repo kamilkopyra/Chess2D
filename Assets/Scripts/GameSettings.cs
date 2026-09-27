@@ -94,7 +94,7 @@ public static class GameSettings
     // Sprite figury z Resources/Pieces/<zestaw>/<w|b><K|Q|R|B|N|P>.png
     static readonly Dictionary<string, Sprite> spriteCache = new Dictionary<string, Sprite>();
 
-    public static Sprite GetPieceSprite(ChessPiece.PieceType type, bool isWhite, PieceSet set = null)
+    public static Sprite GetPieceSprite(ChessEngine.PieceType type, bool isWhite, PieceSet set = null)
     {
         set ??= CurrentPieceSet;
         string path = $"Pieces/{set.Folder}/{(isWhite ? 'w' : 'b')}{PieceLetter(type)}";
@@ -117,15 +117,15 @@ public static class GameSettings
         return sprite;
     }
 
-    static char PieceLetter(ChessPiece.PieceType type)
+    static char PieceLetter(ChessEngine.PieceType type)
     {
         switch (type)
         {
-            case ChessPiece.PieceType.King: return 'K';
-            case ChessPiece.PieceType.Queen: return 'Q';
-            case ChessPiece.PieceType.Rook: return 'R';
-            case ChessPiece.PieceType.Bishop: return 'B';
-            case ChessPiece.PieceType.Knight: return 'N';
+            case ChessEngine.PieceType.King: return 'K';
+            case ChessEngine.PieceType.Queen: return 'Q';
+            case ChessEngine.PieceType.Rook: return 'R';
+            case ChessEngine.PieceType.Bishop: return 'B';
+            case ChessEngine.PieceType.Knight: return 'N';
             default: return 'P';
         }
     }

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using ChessEngine;
 using UnityEngine;
 
 // Podświetlenia na planszy: wybrana figura, możliwe ruchy (kropki / obwódki bicia),
@@ -14,32 +15,23 @@ public class LightAvailableMoves : MonoBehaviour
     private readonly List<GameObject> lastMove = new List<GameObject>();
     private GameObject checkGlow;
 
-    public void LightSquares(ChessPiece piece)
+    // Zaznacza wybraną figurę i jej legalne ruchy (moves = ruchy z tego pola)
+    public void ShowSelection(int square, List<Move> moves)
     {
         ClearHighlights();
-
-        var board = FindFirstObjectByType<BoardCreator>();
-        var mover = FindFirstObjectByType<PieceMover>();
-
-        moveHints.Add(Spawn("Selected", SpriteFactory.Square, piece.currentX, piece.currentY, 1f, SelectedColor, BoardCreator.HighlightOrder));
+        moveHints.Add(Spawn("Selected", SpriteFactory.Square, square, 1f, SelectedColor, BoardCreator.HighlightOrder));
 
         if (!GameSettings.ShowHints) return;
 
-        bool[,] allMoves = piece.GetLegalMoves();
-
-        for (int x = 0; x < 8; x++)
+        var shown = new HashSet<int>(); // promocja daje 4 ruchy na to samo pole
+        foreach (Move move in moves)
         {
-            for (int y = 0; y < 8; y++)
-            {
-                if (!allMoves[x, y] || !mover.WillKingBeSafe(piece, x, y)) continue;
+            if (!shown.Add(move.To)) continue;
 
-                // Bicie (także w przelocie, gdzie pole docelowe jest puste) = obwódka, zwykły ruch = kropka
-                bool isCapture = board.board[x, y] != null || (piece is Pawn && x != piece.currentX);
-
-                moveHints.Add(isCapture
-                    ? Spawn("CaptureHint", SpriteFactory.Ring, x, y, 1f, HintColor, BoardCreator.HintOrder)
-                    : Spawn("MoveHint", SpriteFactory.Circle, x, y, 0.32f, HintColor, BoardCreator.HintOrder));
-            }
+            // Bicie (także w przelocie) = obwódka, zwykły ruch = kropka
+            moveHints.Add(move.IsCapture
+                ? Spawn("CaptureHint", SpriteFactory.Ring, move.To, 1f, HintColor, BoardCreator.HintOrder)
+                : Spawn("MoveHint", SpriteFactory.Circle, move.To, 0.32f, HintColor, BoardCreator.HintOrder));
         }
     }
 
@@ -48,19 +40,19 @@ public class LightAvailableMoves : MonoBehaviour
         DestroyAll(moveHints);
     }
 
-    public void ShowLastMove(int fromX, int fromY, int toX, int toY)
+    public void ShowLastMove(int from, int to)
     {
         DestroyAll(lastMove);
-        lastMove.Add(Spawn("LastMoveFrom", SpriteFactory.Square, fromX, fromY, 1f, LastMoveColor, BoardCreator.HighlightOrder));
-        lastMove.Add(Spawn("LastMoveTo", SpriteFactory.Square, toX, toY, 1f, LastMoveColor, BoardCreator.HighlightOrder));
+        lastMove.Add(Spawn("LastMoveFrom", SpriteFactory.Square, from, 1f, LastMoveColor, BoardCreator.HighlightOrder));
+        lastMove.Add(Spawn("LastMoveTo", SpriteFactory.Square, to, 1f, LastMoveColor, BoardCreator.HighlightOrder));
     }
 
-    // Czerwona poświata pod królem w szachu; null = brak szacha
-    public void ShowCheck(ChessPiece king)
+    // Czerwona poświata pod królem w szachu; Square.None = brak szacha
+    public void ShowCheck(int kingSquare)
     {
         if (checkGlow != null) Destroy(checkGlow);
-        checkGlow = king != null
-            ? Spawn("CheckGlow", SpriteFactory.Glow, king.currentX, king.currentY, 1.05f, CheckColor, BoardCreator.HighlightOrder)
+        checkGlow = kingSquare != Square.None
+            ? Spawn("CheckGlow", SpriteFactory.Glow, kingSquare, 1.05f, CheckColor, BoardCreator.HighlightOrder)
             : null;
     }
 
@@ -68,14 +60,14 @@ public class LightAvailableMoves : MonoBehaviour
     {
         ClearHighlights();
         DestroyAll(lastMove);
-        ShowCheck(null);
+        ShowCheck(Square.None);
     }
 
-    GameObject Spawn(string name, Sprite sprite, int x, int y, float scale, Color color, int order)
+    GameObject Spawn(string name, Sprite sprite, int square, float scale, Color color, int order)
     {
         var go = new GameObject(name);
         go.transform.SetParent(transform, false);
-        go.transform.position = new Vector3(x - 3.5f, y - 3.5f, 0);
+        go.transform.position = BoardCreator.SquareToWorld(square);
         go.transform.localScale = new Vector3(scale, scale, 1);
 
         var sr = go.AddComponent<SpriteRenderer>();
