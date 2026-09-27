@@ -277,14 +277,16 @@ public class PieceMover : MonoBehaviour
     {
         var boardC = FindFirstObjectByType<BoardCreator>();
 
-        var originalCheckState = IsKingInCheck(piece.isWhite);
         // głęboka kopia tablicy referencji (nie tworzymy nowych obiektów ChessPiece, tylko nową macierz wskaźników)
         ChessPiece[,] backup = boardC.board.Clone() as ChessPiece[,];
 
         int origX = piece.currentX, origY = piece.currentY;
-        ChessPiece captured = boardC.board[targetX, targetY];
 
         // symulacja na ORYGINALE
+        // En passant: bity pion stoi obok, na rzędzie startowym bijącego, a nie na polu docelowym
+        if (piece is Pawn && boardC.board[targetX, targetY] == null && targetX != origX)
+            boardC.board[targetX, origY] = null;
+
         boardC.board[origX, origY] = null;
         boardC.board[targetX, targetY] = piece;
         piece.currentX = targetX;
@@ -296,7 +298,6 @@ public class PieceMover : MonoBehaviour
         boardC.board = backup;
         piece.currentX = origX;
         piece.currentY = origY;
-        piece.isChecked = originalCheckState;
 
         return safe;
     }
