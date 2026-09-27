@@ -281,8 +281,8 @@ public class PieceMover : MonoBehaviour
                 ChessPiece piece = board.board[x, y];
                 if (piece != null && piece.isWhite != isWhite)
                 {
-                    bool[,] moves = piece.GetPossibleMoves();
-                    if (moves[king.currentX, king.currentY])
+                    bool[,] attacks = piece.GetAttackedSquares();
+                    if (attacks[king.currentX, king.currentY])
                     {
                         king.isChecked = true;
                         Debug.Log("Szach");

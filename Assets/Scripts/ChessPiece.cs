@@ -37,6 +37,13 @@ public abstract class ChessPiece : MonoBehaviour
         return new bool[8, 8];
     }
 
+    // Pola, które figura atakuje (do sprawdzania szacha).
+    // Domyślnie to samo co ruchy, ale król (bez roszady) i pion (tylko skosy) to nadpisują.
+    public virtual bool[,] GetAttackedSquares()
+    {
+        return GetPossibleMoves();
+    }
+
     void OnMouseDown()
     {
         Debug.Log($"Kliknięto: {type} (Prefab: {sourcePrefabName})\n" +

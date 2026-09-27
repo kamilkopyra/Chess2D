@@ -7,17 +7,29 @@ public class KIng : ChessPiece
     
     public override bool[,] GetPossibleMoves()
     {
-        bool[,] moves = new bool[8, 8];
-        int range = 1;
+        bool[,] moves = GetAttackedSquares();
         BoardCreator boardCreator = FindFirstObjectByType<BoardCreator>();
-        bool longCastleWhite = true;
-        bool shortCastleBlack = true;
-        bool shortCastleWhite = true;
-        bool longCastleBlack = true;
         bool longC = true;
         bool shortC = false;
 
+        if (!hasBeenMoved)
+        {
+            int row = isWhite ? 0 : 7;
+            bool longCastle = CanKingCastle(boardCreator.GetPieceAtPosition(0, row, PieceType.Rook) as Rook, boardCreator, true);
+            bool shortCastle = CanKingCastle(boardCreator.GetPieceAtPosition(7, row, PieceType.Rook) as Rook, boardCreator, false);
+            makeCastleLegal(longCastle, longC, moves);
+            makeCastleLegal(shortCastle, shortC, moves);
+        }
 
+        return moves;
+    }
+
+    // Tylko pola wokół króla, bez roszady. Dzięki temu sprawdzanie szacha
+    // nie wywołuje sprawdzania roszady przeciwnika (wcześniej była tu nieskończona rekurencja).
+    public override bool[,] GetAttackedSquares()
+    {
+        bool[,] moves = new bool[8, 8];
+        int range = 1;
 
         CheckMove(currentX + range, currentY + range, moves);
         CheckMove(currentX - range, currentY - range, moves);
@@ -27,30 +39,6 @@ public class KIng : ChessPiece
         CheckMove(currentX + range, currentY, moves);
         CheckMove(currentX, currentY - range, moves);
         CheckMove(currentX - range, currentY, moves);
-        if (!hasBeenMoved)
-        {
-            if (this.isWhite)
-            {
-                longCastleWhite = CanKingCastle(boardCreator.GetPieceAtPosition(0, 0, PieceType.Rook) as Rook, boardCreator, true);
-                shortCastleWhite = CanKingCastle(boardCreator.GetPieceAtPosition(7, 0, PieceType.Rook) as Rook, boardCreator, false);
-                makeCastleLegal(longCastleWhite, longC, moves);
-                makeCastleLegal(shortCastleWhite, shortC, moves);
-
-            }
-            else if (!this.isWhite)
-            {
-                longCastleBlack = CanKingCastle(boardCreator.GetPieceAtPosition(0, 7, PieceType.Rook) as Rook, boardCreator, true);
-                shortCastleBlack = CanKingCastle(boardCreator.GetPieceAtPosition(7, 7, PieceType.Rook) as Rook, boardCreator, false);
-                makeCastleLegal(longCastleBlack,longC, moves);
-                makeCastleLegal(shortCastleBlack, shortC, moves);
-            }
-        }
-        Debug.Log($"Long Castle White: {longCastleWhite}");
-        Debug.Log($"Short Castle White: {shortCastleWhite}");
-        Debug.Log($"Long Castle Black: {longCastleBlack}");
-        Debug.Log($"Short Castle Black: {shortCastleBlack}");
-
-
 
         return moves;
     }
@@ -71,44 +59,29 @@ public class KIng : ChessPiece
         PieceMover mover = FindFirstObjectByType<PieceMover>();
         
         if (rook == null) return false;
+        if (rook.isWhite != this.isWhite) return false;
+        if (rook.hasBeenMoved || this.hasBeenMoved) return false;
 
+        // Nie można roszować z szacha (liczone na bieżąco, bo flaga isChecked bywa nieaktualna)
+        if (mover.IsKingInCheck(this.isWhite)) return false;
 
+        int row = isWhite ? 0 : 7;
 
-        bool color = this.isWhite;
-        if (rook.isWhite == color && !this.isChecked)
+        if (type == true)
         {
-            if (rook.hasBeenMoved == true || this.hasBeenMoved) { return false; }
-
-            if (this.isWhite)
+            // Długa: b, c, d muszą być puste, ale atakowane nie mogą być tylko c i d
+            // (pole b król nie przechodzi, więc może być atakowane)
+            if (board.board[1, row] == null && board.board[2, row] == null && board.board[3, row] == null)
             {
-                if (type == true)
-                {
-                    if (board.board[1, 0] == null && board.board[2, 0] == null && board.board[3, 0] == null)
-                    {
-                        if (mover.WillKingBeSafe(this, 1, 0) && mover.WillKingBeSafe(this, 2, 0) && mover.WillKingBeSafe(this, 3, 0)) return true;
-
-
-                    }
-                }
-                else if (board.board[5, 0] == null && board.board[6, 0] == null) 
-                {
-                    if (mover.WillKingBeSafe(this, 5, 0) && mover.WillKingBeSafe(this, 6, 0)) return true;
-                }
+                if (mover.WillKingBeSafe(this, 3, row) && mover.WillKingBeSafe(this, 2, row)) return true;
             }
-            else
+        }
+        else
+        {
+            // Krótka: f i g muszą być puste i nieatakowane
+            if (board.board[5, row] == null && board.board[6, row] == null)
             {
-                if (type == true)
-                {
-                    if (board.board[1, 7] == null && board.board[2, 7] == null && board.board[3, 7] == null)
-                    {
-                        if (mover.WillKingBeSafe(this, 1, 7) && mover.WillKingBeSafe(this, 2, 7) && mover.WillKingBeSafe(this, 3, 7)) return true;
-                    }
-                }
-                else if (board.board[5, 7] == null && board.board[6, 7] == null)
-                {
-                    if (mover.WillKingBeSafe(this, 5, 7) && mover.WillKingBeSafe(this, 6, 7)) return true;
-                }
-
+                if (mover.WillKingBeSafe(this, 5, row) && mover.WillKingBeSafe(this, 6, row)) return true;
             }
         }
         return false;
@@ -139,8 +112,5 @@ public class KIng : ChessPiece
     }
 
 }
-
-
-// Trzeba dodać roszadę
 
 

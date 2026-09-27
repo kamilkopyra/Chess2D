@@ -59,7 +59,22 @@ public class Pawn : ChessPiece
         return moves;
     }
 
-        
+    // Pion atakuje oba pola na ukos przed sobą, niezależnie od tego, czy coś tam stoi
+    public override bool[,] GetAttackedSquares()
+    {
+        bool[,] attacks = new bool[8, 8];
+        int y = currentY + (isWhite ? 1 : -1);
+
+        if (y >= 0 && y < 8)
+        {
+            if (currentX + 1 < 8) attacks[currentX + 1, y] = true;
+            if (currentX - 1 >= 0) attacks[currentX - 1, y] = true;
+        }
+
+        return attacks;
+    }
+
+
         void CheckTake(BoardCreator boardCreator,int x, int y,bool[,] moves)
         {
             if (x >= 0 && x < 8 && y >= 0 && y < 8) // Zabezpieczenie przed wyjściem poza planszę
