@@ -20,7 +20,7 @@ public class PieceMover : MonoBehaviour
 
     private bool IsBotTurn => Position.SideToMove == botSide && !isWaitingForPromotion && !isGameOver;
 
-    private IBot bot;
+    private BotBase bot;
 
     public bool IsWhiteTurn => Position.SideToMove == Side.White;
     public bool IsGameOver => isGameOver;
@@ -32,7 +32,7 @@ public class PieceMover : MonoBehaviour
 
     void Start()
     {
-        bot = new Bot_v1();
+        bot = new Bot_v2(4);
         boardView = FindFirstObjectByType<BoardCreator>();
         lightManager = FindFirstObjectByType<LightAvailableMoves>();
         ResetGame();

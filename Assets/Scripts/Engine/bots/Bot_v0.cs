@@ -2,12 +2,10 @@ using System;
 
 namespace ChessEngine
 {
-    public class Bot_v0 : IBot
+    public class Bot_v0 : BotBase
     {
 
-        static readonly Random rand = new Random();
-
-        public Move ChooseMove(Position position)
+        public override Move ChooseMove(Position position)
         {
             var moves = position.GetLegalMoves();
             if (moves.Count == 0)
