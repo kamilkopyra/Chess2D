@@ -54,3 +54,11 @@ sysinfo.txt
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Match tooling (Tools/): keep the UCI project, ignore build output, downloaded engines and match logs
+!Tools/**/*.csproj
+Tools/**/bin/
+Tools/**/obj/
+Tools/bin/
+Tools/external/
+Tools/matches/
