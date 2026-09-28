@@ -16,6 +16,11 @@ public class PieceMover : MonoBehaviour
     private int selectedSquare = Square.None;
     private bool isWaitingForPromotion;
     private bool isGameOver;
+    private readonly Side botSide = Side.Black; 
+
+    private bool IsBotTurn => Position.SideToMove == botSide && !isWaitingForPromotion && !isGameOver;
+
+    private Bot_v0 bot;
 
     public bool IsWhiteTurn => Position.SideToMove == Side.White;
     public bool IsGameOver => isGameOver;
@@ -27,6 +32,7 @@ public class PieceMover : MonoBehaviour
 
     void Start()
     {
+        bot = new Bot_v0();
         boardView = FindFirstObjectByType<BoardCreator>();
         lightManager = FindFirstObjectByType<LightAvailableMoves>();
         ResetGame();
@@ -35,6 +41,7 @@ public class PieceMover : MonoBehaviour
     // Nowa partia (start, Rewanż, Nowa gra)
     public void ResetGame()
     {
+        CancelInvoke(nameof(MakeBotMove));
         Position = Position.StartPosition();
         legalMoves = Position.GetLegalMoves();
         selectedSquare = Square.None;
@@ -48,7 +55,7 @@ public class PieceMover : MonoBehaviour
 
     void Update()
     {
-        if (isWaitingForPromotion || isGameOver || !Input.GetMouseButtonDown(0)) return;
+        if (isWaitingForPromotion || isGameOver || !Input.GetMouseButtonDown(0) || IsBotTurn) return;
 
         // Kliknięcia w menu i przyciski nie mogą przechodzić na planszę
         if (UIManager.Instance != null && UIManager.Instance.BlocksBoardInput(Input.mousePosition)) return;
@@ -135,5 +142,16 @@ public class PieceMover : MonoBehaviour
             Debug.Log($"Koniec gry: {status}");
             EndGame.Show(status, winner: Position.SideToMove.Opponent());
         }
+        if (!isGameOver && IsBotTurn)
+        {
+            Invoke(nameof(MakeBotMove), 0.5f); 
+        }
+    }
+
+    void MakeBotMove()
+    {
+        if(isGameOver || isWaitingForPromotion) return;
+        Move move = bot.ChooseMove(Position);
+        ApplyMove(move);
     }
 }
