@@ -2,10 +2,10 @@ using System;
 
 namespace ChessEngine
 {
-    public class Bot_v0
+    public class Bot_v0 : IBot
     {
 
-        private readonly Random rand = new Random();
+        static readonly Random rand = new Random();
 
         public Move ChooseMove(Position position)
         {
