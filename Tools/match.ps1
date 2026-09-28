@@ -73,12 +73,27 @@ if ($useStockfish) {
     }
 }
 
+# --- Sanity check: too many parallel games starve the engines of CPU and they lose on time ---
+$cores = (Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfCores -Sum).Sum
+$safeConcurrency = [Math]::Max(1, [Math]::Floor($cores / 2))
+if ($Concurrency -gt $safeConcurrency) {
+    Write-Warning ("Concurrency $Concurrency is high for $cores CPU cores (each game runs two engines). " +
+                   "Engines may lose on time and the result will be unreliable. Recommended: $safeConcurrency or less.")
+}
+
 # --- Build the UCI front-end with the current engine and bot sources ---
+# Every match gets its own build folder, so a running match never locks the exe of the next one.
+$stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 Write-Host "Building Chess2D.Uci..."
-$uciOut = Join-Path $root "bin\uci"
+$uciOut = Join-Path $root "bin\uci\$stamp"
 dotnet build (Join-Path $root "Chess2D.Uci\Chess2D.Uci.csproj") -c Release -nologo -v q -o $uciOut
 if ($LASTEXITCODE -ne 0) { throw "Build of Chess2D.Uci failed" }
 $uci = Join-Path $uciOut "Chess2D.Uci.exe"
+
+# Remove build folders of earlier matches (skipped silently if a match is still using them)
+Get-ChildItem (Join-Path $root "bin\uci") -Directory | Where-Object { $_.Name -ne $stamp } | ForEach-Object {
+    try { Remove-Item $_.FullName -Recurse -Force -ErrorAction Stop } catch { }
+}
 
 # --- Match ---
 $botName = "Chess2D-$Bot-d$Depth"
@@ -94,7 +109,6 @@ if ($useStockfish) {
                       "arg=--bot", "arg=$OpponentBot", "arg=--depth", "arg=$OpponentDepth")
 }
 
-$stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 $pgn = Join-Path $matchesDir "$stamp`_$botName`_vs_$opponentName.pgn"
 $log = [IO.Path]::ChangeExtension($pgn, ".log")
 
@@ -128,4 +142,10 @@ if ($eloLine) {
     if ($diff -match "inf") {
         Write-Host "One side won every game - the Elo difference can't be computed. Pick a stronger/weaker opponent."
     }
+}
+
+$timeLosses = (Select-String -Path $log -Pattern "^Finished game .*loses on time").Count
+if ($timeLosses -gt 0) {
+    Write-Warning ("$timeLosses game(s) were lost on time. The result is unreliable - " +
+                   "lower -Concurrency or use a longer -TimeControl.")
 }
