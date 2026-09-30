@@ -29,6 +29,7 @@ public class UIManager : MonoBehaviour
     // HUD
     private VisualElement turnPill, turnDot;
     private Label turnLabel;
+    private Label botInfoLabel;
 
     // Menu
     private VisualElement continueButton;
@@ -225,6 +226,18 @@ public class UIManager : MonoBehaviour
         right.Add(MakeButton("New game", "small", StartNewGame));
         right.Add(MakeButton("Menu", "small", ShowMenu));
         hud.Add(right);
+
+        // Bot thinking time in the bottom-right corner
+        botInfoLabel = new Label { pickingMode = PickingMode.Ignore };
+        botInfoLabel.AddToClassList("bot-info");
+        botInfoLabel.style.display = DisplayStyle.None;
+        root.Add(botInfoLabel);
+    }
+
+    public void ShowBotThinkTime(string botName, double seconds)
+    {
+        botInfoLabel.text = $"{botName}  ·  thought {seconds:0.00} s";
+        botInfoLabel.style.display = DisplayStyle.Flex;
     }
 
     void BuildMenu()

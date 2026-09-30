@@ -2,9 +2,7 @@ using System.Collections.Generic;
 using ChessEngine;
 using UnityEngine;
 
-// Kontroler partii: trzyma stan gry (silnik), zamienia kliknięcia na ruchy
-// i przekazuje wynik do widoku planszy, podświetleń i UI.
-// Każdy ruch przechodzi przez ApplyMove, więc później tak samo podłączy się bot albo gra przez sieć.
+
 public class PieceMover : MonoBehaviour
 {
     public Position Position { get; private set; }
@@ -32,7 +30,7 @@ public class PieceMover : MonoBehaviour
 
     void Start()
     {
-        bot = new Bot_v2(4);
+        bot = new Bot_v4(6);
         boardView = FindFirstObjectByType<BoardCreator>();
         lightManager = FindFirstObjectByType<LightAvailableMoves>();
         ResetGame();
@@ -144,14 +142,20 @@ public class PieceMover : MonoBehaviour
         }
         if (!isGameOver && IsBotTurn)
         {
-            Invoke(nameof(MakeBotMove), 0.5f); 
+            Invoke(nameof(MakeBotMove), 0.3f); 
         }
     }
 
     void MakeBotMove()
     {
         if(isGameOver || isWaitingForPromotion) return;
+
+        // Measure the bot's thinking time and show it in the corner of the screen
+        var watch = System.Diagnostics.Stopwatch.StartNew();
         Move move = bot.ChooseMove(Position);
+        watch.Stop();
+        UIManager.Instance?.ShowBotThinkTime(bot.GetType().Name, watch.Elapsed.TotalSeconds);
+
         ApplyMove(move);
     }
 }

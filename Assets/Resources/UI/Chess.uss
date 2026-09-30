@@ -102,6 +102,19 @@ Label {
     font-size: 20px;
 }
 
+.bot-info {
+    position: absolute;
+    right: 32px;
+    bottom: 24px;
+    padding: 8px 16px;
+    border-radius: 14px;
+    background-color: var(--bg-card);
+    border-width: 1px;
+    border-color: var(--bg-card-border);
+    color: var(--text-muted);
+    font-size: 16px;
+}
+
 /* ===== Przyciski ===== */
 
 .btn {
