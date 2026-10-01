@@ -25,6 +25,9 @@ powershell -ExecutionPolicy Bypass -File .\match.ps1 -Bot v2 -Depth 4 -Stockfish
 
 # bot vs bot, e.g. to check that a new version beats the previous one
 powershell -ExecutionPolicy Bypass -File .\match.ps1 -Bot v2 -Depth 3 -OpponentBot v1 -OpponentDepth 3
+
+# SPRT: play until it's statistically clear whether v16 is better than v15 (at most 1000 games)
+powershell -ExecutionPolicy Bypass -File .\match.ps1 -Bot v16 -OpponentBot v15 -Sprt -Games 1000 -TimeControl 20+0.2 -Concurrency 8
 ```
 
 | Parameter | Default | Meaning |
@@ -37,6 +40,8 @@ powershell -ExecutionPolicy Bypass -File .\match.ps1 -Bot v2 -Depth 3 -OpponentB
 | `-TimeControl` | `60+0.6` | cutechess time control; Stockfish's `UCI_Elo` is calibrated at 60+0.6 |
 | `-Concurrency` | `4` | games played in parallel |
 | `-MaxMoves` | `200` | games longer than this are adjudicated as draws |
+| `-Sprt` | off | stop the match as soon as the result is statistically clear; `-Games` becomes the upper limit |
+| `-Elo0` / `-Elo1` | `0` / `10` | SPRT hypotheses: H0 "not stronger than Elo0", H1 "stronger by at least Elo1" |
 
 Games (PGN) and logs are saved in `Tools/matches/`.
 
@@ -47,6 +52,9 @@ cutechess prints `Elo difference: X +/- Y`. Against Stockfish the script also pr
 
 - The margin `Y` shrinks with more games: ~100 games give roughly ±70, ~400 games roughly ±35.
 - If one side wins every game the difference is `inf` – choose a weaker or stronger opponent.
+- With `-Sprt` the match ends with `H1 was accepted` (the bot is stronger by about Elo1 or more)
+  or `H0 was accepted` (it isn't stronger than Elo0). Big improvements finish in ~100 games,
+  small ones can take several hundred - that's the price of a reliable answer for a small difference.
 - The number is on Stockfish's `UCI_Elo` scale (engine ratings). It does not translate 1:1 to human
   ratings on lichess or chess.com.
 

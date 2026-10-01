@@ -17,6 +17,11 @@
 .EXAMPLE
     .\match.ps1 -Bot v2 -Depth 3 -OpponentBot v1
     Bot against bot (no Stockfish) - handy for checking that a new version is stronger.
+
+.EXAMPLE
+    .\match.ps1 -Bot v16 -OpponentBot v15 -Sprt -Games 1000 -TimeControl 20+0.2 -Concurrency 8
+    SPRT test: plays until it is statistically clear whether v16 is at least Elo1 (default 10) stronger
+    (H1 accepted) or not better than Elo0 (default 0) (H0 accepted). -Games is only the upper limit then.
 #>
 param(
     [string]$Bot = "v2",
@@ -27,7 +32,11 @@ param(
     [int]$Games = 100,
     [string]$TimeControl = "60+0.6",
     [int]$Concurrency = 4,
-    [int]$MaxMoves = 200
+    [int]$MaxMoves = 200,
+    # Sequential probability ratio test: stop as soon as the result is statistically clear
+    [switch]$Sprt,
+    [double]$Elo0 = 0,
+    [double]$Elo1 = 10
 )
 
 $ErrorActionPreference = "Stop"
@@ -133,8 +142,14 @@ $cutechessArgs = $engineArgs + $opponentArgs + @(
     "-recover",
     "-pgnout", $pgn
 )
+if ($Sprt) {
+    # alpha/beta: 5% chance of accepting the wrong hypothesis in either direction
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    $cutechessArgs += @("-sprt", "elo0=$($Elo0.ToString($culture))", "elo1=$($Elo1.ToString($culture))", "alpha=0.05", "beta=0.05")
+}
 
-Write-Host "Match: $botName vs $opponentName, $($rounds * 2) games, tc=$TimeControl, concurrency=$Concurrency"
+$mode = if ($Sprt) { "SPRT elo0=$Elo0 elo1=$Elo1, at most $($rounds * 2) games" } else { "$($rounds * 2) games" }
+Write-Host "Match: $botName vs $opponentName, $mode, tc=$TimeControl, concurrency=$Concurrency"
 Write-Host "PGN: $pgn"
 # Warnings that cutechess prints to stderr must not abort the match
 $ErrorActionPreference = "Continue"
@@ -157,7 +172,17 @@ if ($eloLine) {
     }
 }
 
-$timeLosses = (Select-String -Path $log -Pattern "^Finished game .*loses on time").Count
+if ($Sprt) {
+    $sprtLine = Select-String -Path $log -Pattern "^SPRT:" | Select-Object -Last 1
+    if ($sprtLine) {
+        Write-Host $sprtLine.Line
+        if ($sprtLine.Line -match "H1 was accepted") { Write-Host "SPRT result: $botName is stronger (H1 accepted)." }
+        elseif ($sprtLine.Line -match "H0 was accepted") { Write-Host "SPRT result: $botName is NOT stronger (H0 accepted)." }
+        else { Write-Host "SPRT result: inconclusive, the game limit was reached first." }
+    }
+}
+
+$timeLosses =(Select-String -Path $log -Pattern "^Finished game .*loses on time").Count
 if ($timeLosses -gt 0) {
     Write-Warning ("$timeLosses game(s) were lost on time. The result is unreliable - " +
                    "lower -Concurrency or use a longer -TimeControl.")
