@@ -165,6 +165,40 @@ namespace ChessEngine
             Hash = undo.Hash;
         }
 
+        // Passes the turn without moving a piece - not a legal chess move, used by null move pruning in search.
+        // Must be undone with UnmakeNullMove.
+        public void MakeNullMove()
+        {
+            history.Add(new Undo
+            {
+                Move = default,
+                Captured = Piece.None,
+                Castling = Castling,
+                EnPassant = EnPassantSquare,
+                Halfmove = HalfmoveClock,
+                Hash = Hash,
+            });
+
+            Hash ^= EnPassantKey() ^ Zobrist.BlackToMove;
+            EnPassantSquare = Square.None;
+            // Positions before a null move can't count as repetitions of positions after it
+            HalfmoveClock = 0;
+            if (SideToMove == Side.Black) FullmoveNumber++;
+            SideToMove = SideToMove.Opponent();
+        }
+
+        public void UnmakeNullMove()
+        {
+            Undo undo = history[history.Count - 1];
+            history.RemoveAt(history.Count - 1);
+
+            SideToMove = SideToMove.Opponent();
+            if (SideToMove == Side.Black) FullmoveNumber--;
+            EnPassantSquare = undo.EnPassant;
+            HalfmoveClock = undo.Halfmove;
+            Hash = undo.Hash;
+        }
+
         private void PutPiece(int square, Piece piece)
         {
             board[square] = piece;

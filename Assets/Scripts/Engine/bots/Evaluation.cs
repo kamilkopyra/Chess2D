@@ -119,14 +119,59 @@ namespace ChessEngine
         };
 
         // Score from the point of view of the side to move (positive = good for the side to move)
-        public static int Evaluate(Position position)
+        public static int Evaluate(Position position) => Evaluate(position, false);
+
+        // Evaluate + pawn structure and piece placement terms (used by Bot_v15 and newer)
+        public static int EvaluateWithStructure(Position position) => Evaluate(position, true);
+
+        // Only the structure terms, for tests
+        public static int Structure(Position position) => Evaluate(position, true) - Evaluate(position, false);
+
+        private static int Evaluate(Position position, bool withStructure)
         {
             int middlegame = 0, endgame = 0, phase = 0;
+
+            // Collected for the structure terms during the same pass over the board.
+            // Per side and file (index side * 8 + file): number of pawns and the lowest/highest rank of a pawn on it.
+            // stackalloc: no garbage for the collector, this runs millions of times per search.
+            // Without structure terms nothing is allocated, so the older bots run exactly as before.
+            Span<int> pawnCount = withStructure ? stackalloc int[16] : default;
+            Span<int> minRank = withStructure ? stackalloc int[16] : default;
+            Span<int> maxRank = withStructure ? stackalloc int[16] : default;
+            Span<int> bishops = withStructure ? stackalloc int[2] : default;
+            Span<int> pieceSquares = withStructure ? stackalloc int[64] : default;   // squares of pawns and rooks
+            int pieceCount = 0;
+            if (withStructure)
+            {
+                minRank.Fill(8);
+                maxRank.Fill(-1);
+            }
 
             for (int square = 0; square < 64; square++)
             {
                 Piece piece = position[square];
                 if (piece.IsEmpty) continue;
+
+                if (withStructure)
+                {
+                    int side = (int)piece.Color;
+                    if (piece.Type == PieceType.Pawn)
+                    {
+                        int file = Square.File(square), rank = Square.Rank(square);
+                        pawnCount[side * 8 + file]++;
+                        minRank[side * 8 + file] = Math.Min(minRank[side * 8 + file], rank);
+                        maxRank[side * 8 + file] = Math.Max(maxRank[side * 8 + file], rank);
+                        pieceSquares[pieceCount++] = square;
+                    }
+                    else if (piece.Type == PieceType.Rook)
+                    {
+                        pieceSquares[pieceCount++] = square;
+                    }
+                    else if (piece.Type == PieceType.Bishop)
+                    {
+                        bishops[side]++;
+                    }
+                }
 
                 int index = TableIndex(square, piece.Color);
                 int material = PieceValues[(int)piece.Type];
@@ -160,6 +205,12 @@ namespace ChessEngine
                 middlegame += sign * (material + mg);
                 endgame += sign * (material + eg);
                 phase += PhaseWeights[(int)piece.Type];
+            }
+
+            if (withStructure)
+            {
+                AddStructure(position, pawnCount, minRank, maxRank, bishops, pieceSquares.Slice(0, pieceCount),
+                             ref middlegame, ref endgame);
             }
 
             // Blend: full middlegame score with all pieces on the board, full endgame score with none left
@@ -206,6 +257,94 @@ namespace ChessEngine
             int centreDistance = Math.Max(3 - weakFile, weakFile - 4) + Math.Max(3 - weakRank, weakRank - 4);
             int kingsDistance = Math.Abs(Square.File(strongKing) - weakFile) + Math.Abs(Square.Rank(strongKing) - weakRank);
             return 10 * centreDistance + 4 * (14 - kingsDistance);
+        }
+
+        // ===== Pawn structure and piece placement (used by Bot_v15 and newer, on top of Evaluate) =====
+
+        // Passed pawn bonus by rank counted from the pawn's own side (index 1 = starting rank, 6 = one step from promotion)
+        private static readonly int[] PassedMiddlegame = { 0, 0, 5, 10, 20, 35, 60, 0 };
+        private static readonly int[] PassedEndgame = { 0, 5, 10, 20, 40, 70, 110, 0 };
+
+        private const int DoubledMiddlegame = -10, DoubledEndgame = -20;     // per extra pawn on the same file
+        private const int IsolatedMiddlegame = -10, IsolatedEndgame = -15;   // per pawn without friendly pawns on neighbouring files
+        private const int BishopPairMiddlegame = 30, BishopPairEndgame = 50;
+        private const int RookOpenFileMiddlegame = 25, RookOpenFileEndgame = 10;          // no pawns at all on the file
+        private const int RookSemiOpenFileMiddlegame = 12, RookSemiOpenFileEndgame = 5;   // only enemy pawns on the file
+        private const int RookSeventhMiddlegame = 20, RookSeventhEndgame = 30;            // rook on the enemy's second rank
+
+        // Passed, doubled and isolated pawns, the bishop pair and rook placement (White minus Black),
+        // added to the middlegame and endgame scores before they are blended
+        private static void AddStructure(Position position, Span<int> pawnCount, Span<int> minRank, Span<int> maxRank,
+                                         Span<int> bishops, Span<int> pieceSquares, ref int middlegame, ref int endgame)
+        {
+
+            for (int i = 0; i < pieceSquares.Length; i++)
+            {
+                int square = pieceSquares[i];
+                Piece piece = position[square];
+
+                Side color = piece.Color;
+                int us = (int)color, them = 1 - us;
+                int sign = color == Side.White ? 1 : -1;
+                int file = Square.File(square), rank = Square.Rank(square);
+                int relativeRank = color == Side.White ? rank : 7 - rank;
+
+                if (piece.Type == PieceType.Pawn)
+                {
+                    // Passed: no enemy pawn in front of it on its own file or the neighbouring ones.
+                    // Of doubled pawns only the front one counts, the rear one is blocked by its own pawn.
+                    bool passed = color == Side.White ? maxRank[us * 8 + file] == rank : minRank[us * 8 + file] == rank;
+                    for (int f = Math.Max(0, file - 1); f <= Math.Min(7, file + 1) && passed; f++)
+                    {
+                        passed = color == Side.White ? maxRank[them * 8 + f] <= rank : minRank[them * 8 + f] >= rank;
+                    }
+                    if (passed)
+                    {
+                        middlegame += sign * PassedMiddlegame[relativeRank];
+                        endgame += sign * PassedEndgame[relativeRank];
+                    }
+
+                    bool isolated = (file == 0 || pawnCount[us * 8 + file - 1] == 0) && (file == 7 || pawnCount[us * 8 + file + 1] == 0);
+                    if (isolated)
+                    {
+                        middlegame += sign * IsolatedMiddlegame;
+                        endgame += sign * IsolatedEndgame;
+                    }
+                }
+                else // Rook
+                {
+                    if (pawnCount[us * 8 + file] == 0)
+                    {
+                        bool open = pawnCount[them * 8 + file] == 0;
+                        middlegame += sign * (open ? RookOpenFileMiddlegame : RookSemiOpenFileMiddlegame);
+                        endgame += sign * (open ? RookOpenFileEndgame : RookSemiOpenFileEndgame);
+                    }
+                    if (relativeRank == 6)
+                    {
+                        middlegame += sign * RookSeventhMiddlegame;
+                        endgame += sign * RookSeventhEndgame;
+                    }
+                }
+            }
+
+            for (int side = 0; side < 2; side++)
+            {
+                int sign = side == (int)Side.White ? 1 : -1;
+                for (int file = 0; file < 8; file++)
+                {
+                    if (pawnCount[side * 8 + file] > 1)
+                    {
+                        middlegame += sign * DoubledMiddlegame * (pawnCount[side * 8 + file] - 1);
+                        endgame += sign * DoubledEndgame * (pawnCount[side * 8 + file] - 1);
+                    }
+                }
+                if (bishops[side] >= 2)
+                {
+                    middlegame += sign * BishopPairMiddlegame;
+                    endgame += sign * BishopPairEndgame;
+                }
+            }
+
         }
 
         // Tables are drawn with rank 8 first. For White, a1 (square 0) is the last row: index = square ^ 56.

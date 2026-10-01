@@ -27,6 +27,23 @@ namespace ChessEngine.Tests
             }
         }
 
+        // Null move: only the side to move changes (and the en passant square disappears); undo restores everything
+        [TestCase("rnbqkbnr/ppp1pppp/8/8/3pP3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 3")]
+        [TestCase("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 5 20")]
+        public void NullMoveKeepsHashConsistentAndUndoes(string fen)
+        {
+            var position = Position.FromFen(fen);
+            ulong hash = position.Hash;
+
+            position.MakeNullMove();
+            Assert.IsTrue(position.HashIsConsistent());
+            Assert.AreNotEqual(hash, position.Hash);
+
+            position.UnmakeNullMove();
+            Assert.AreEqual(fen, position.ToFen());
+            Assert.AreEqual(hash, position.Hash);
+        }
+
         [TestCase("rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3", GameStatus.Checkmate)]
         [TestCase("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1", GameStatus.Stalemate)]
         [TestCase("8/8/4k3/8/8/4K3/8/7R w - - 100 80", GameStatus.FiftyMoveRule)]

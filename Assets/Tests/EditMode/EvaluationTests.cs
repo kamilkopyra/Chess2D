@@ -47,6 +47,32 @@ namespace ChessEngine.Tests
             Assert.Greater(centre, corner);
         }
 
+        [TestCase("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3")]
+        [TestCase("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1")]
+        [TestCase("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1")]
+        [TestCase("2r3k1/1P3pp1/8/3p4/8/2P2P2/2P3PR/6K1 b - - 0 1")]
+        public void StructureIsSymmetricForBothColours(string fen)
+        {
+            Assert.AreEqual(Evaluation.Structure(Position.FromFen(fen)), Evaluation.Structure(Position.FromFen(Mirror(fen))));
+        }
+
+        [Test]
+        public void StructureIsZeroInTheStartPosition()
+        {
+            Assert.AreEqual(0, Evaluation.Structure(Position.StartPosition()));
+        }
+
+        // Each pair: the first position is better for White than the second because of one structural feature
+        [TestCase("4k3/8/8/3P4/8/8/8/4K3 w - - 0 1", "4k3/4p3/8/3P4/8/8/8/4K3 w - - 0 1")]         // passed pawn vs pawn that can be stopped
+        [TestCase("4k3/p7/8/8/8/8/P1P5/4K3 w - - 0 1", "4k3/p7/8/8/8/2P5/2P5/4K3 w - - 0 1")]     // healthy vs doubled pawns
+        [TestCase("4k3/pp6/8/8/8/8/PP6/4K3 w - - 0 1", "4k3/pp6/8/8/8/8/P1P5/4K3 w - - 0 1")]     // connected vs isolated pawns
+        [TestCase("4k3/8/8/8/8/8/8/2B1KB2 w - - 0 1", "4k3/8/8/8/8/8/8/1NB1K3 w - - 0 1")]        // bishop pair vs bishop and knight
+        [TestCase("4k3/pp6/8/8/8/8/PP6/4KR2 w - - 0 1", "4k3/pp3p2/8/8/8/8/PP3P2/4KR2 w - - 0 1")] // rook on an open vs closed file
+        public void StructureRewardsBetterFeature(string better, string worse)
+        {
+            Assert.Greater(Evaluation.Structure(Position.FromFen(better)), Evaluation.Structure(Position.FromFen(worse)));
+        }
+
         // Flips the board vertically and swaps the colours of all pieces, the side to move and castling rights
         private static string Mirror(string fen)
         {
