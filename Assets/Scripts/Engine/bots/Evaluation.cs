@@ -124,10 +124,16 @@ namespace ChessEngine
         // Evaluate + pawn structure and piece placement terms (used by Bot_v15 and newer)
         public static int EvaluateWithStructure(Position position) => Evaluate(position, true);
 
+        // Evaluate + structure + king safety (used by Bot_v16 and newer)
+        public static int EvaluateWithKingSafety(Position position) => Evaluate(position, true, true);
+
         // Only the structure terms, for tests
         public static int Structure(Position position) => Evaluate(position, true) - Evaluate(position, false);
 
-        private static int Evaluate(Position position, bool withStructure)
+        // Only the king safety terms, for tests
+        public static int KingSafety(Position position) => Evaluate(position, true, true) - Evaluate(position, true);
+
+        private static int Evaluate(Position position, bool withStructure, bool withKingSafety = false)
         {
             int middlegame = 0, endgame = 0, phase = 0;
 
@@ -211,6 +217,12 @@ namespace ChessEngine
             {
                 AddStructure(position, pawnCount, minRank, maxRank, bishops, pieceSquares.Slice(0, pieceCount),
                              ref middlegame, ref endgame);
+            }
+
+            if (withKingSafety)
+            {
+                // Only in the middlegame part: in the endgame the king should leave its shelter and be active
+                middlegame += KingShelter(position, Side.White, pawnCount) - KingShelter(position, Side.Black, pawnCount);
             }
 
             // Blend: full middlegame score with all pieces on the board, full endgame score with none left
@@ -345,6 +357,45 @@ namespace ChessEngine
                 }
             }
 
+        }
+
+        // ===== King safety (used by Bot_v16 and newer) =====
+
+        private const int ShieldPawnNear = 12;     // own pawn right in front of the king (or diagonally in front)
+        private const int ShieldPawnFar = 6;       // own pawn two squares in front
+        private const int ShieldPawnAdvanced = -8; // own pawn on the file, but advanced further away
+        private const int ShieldFileNoOwnPawn = -15;   // no own pawn on a file next to the king
+        private const int ShieldFileOpen = -10;        // ...and no enemy pawn either: a fully open file towards the king
+
+        // Pawn shelter of a king still on its first two ranks: pawns on its own file and the two neighbouring ones.
+        // A king that has walked up the board gets nothing here (the king tables already punish that).
+        private static int KingShelter(Position position, Side color, Span<int> pawnCount)
+        {
+            int king = position.KingSquare(color);
+            int kingFile = Square.File(king);
+            int relativeRank = color == Side.White ? Square.Rank(king) : 7 - Square.Rank(king);
+            if (relativeRank > 1) return 0;
+
+            int us = (int)color, them = 1 - us;
+            int forward = color == Side.White ? 1 : -1;
+            int kingRank = Square.Rank(king);
+            int score = 0;
+
+            for (int file = Math.Max(0, kingFile - 1); file <= Math.Min(7, kingFile + 1); file++)
+            {
+                if (position[Square.Make(file, kingRank + forward)].Is(PieceType.Pawn, color))
+                    score += ShieldPawnNear;
+                else if (position[Square.Make(file, kingRank + 2 * forward)].Is(PieceType.Pawn, color))
+                    score += ShieldPawnFar;
+                else if (pawnCount[us * 8 + file] > 0)
+                    score += ShieldPawnAdvanced;
+                else
+                {
+                    score += ShieldFileNoOwnPawn;
+                    if (pawnCount[them * 8 + file] == 0) score += ShieldFileOpen;
+                }
+            }
+            return score;
         }
 
         // Tables are drawn with rank 8 first. For White, a1 (square 0) is the last row: index = square ^ 56.

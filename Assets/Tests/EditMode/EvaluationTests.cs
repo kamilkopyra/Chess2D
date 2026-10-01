@@ -73,6 +73,28 @@ namespace ChessEngine.Tests
             Assert.Greater(Evaluation.Structure(Position.FromFen(better)), Evaluation.Structure(Position.FromFen(worse)));
         }
 
+        [TestCase("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3")]
+        [TestCase("r4rk1/pp3ppp/2n5/8/8/5N2/PP3P1P/R4RK1 b - - 0 1")]
+        [TestCase("2kr4/ppp5/8/8/8/8/5PP1/6K1 w - - 0 1")]
+        public void KingSafetyIsSymmetricForBothColours(string fen)
+        {
+            Assert.AreEqual(Evaluation.KingSafety(Position.FromFen(fen)), Evaluation.KingSafety(Position.FromFen(Mirror(fen))));
+        }
+
+        [Test]
+        public void KingSafetyIsZeroInTheStartPosition()
+        {
+            Assert.AreEqual(0, Evaluation.KingSafety(Position.StartPosition()));
+        }
+
+        // Each pair: White's king is safer in the first position (same material, middlegame)
+        [TestCase("r4rk1/ppp2ppp/8/8/8/8/PPP2PPP/R2Q1RK1 w - - 0 1", "r4rk1/ppp2ppp/8/8/8/6P1/PPP2P1P/R2Q1RK1 w - - 0 1")] // intact vs advanced g-pawn
+        [TestCase("r4rk1/ppp2ppp/8/8/8/8/PPP2PPP/R2Q1RK1 w - - 0 1", "r4rk1/ppp2ppp/8/8/8/8/PPP2PP1/R2Q1RK1 w - - 0 1")] // intact vs missing h-pawn
+        public void KingSafetyRewardsPawnShelter(string safer, string lessSafe)
+        {
+            Assert.Greater(Evaluation.KingSafety(Position.FromFen(safer)), Evaluation.KingSafety(Position.FromFen(lessSafe)));
+        }
+
         // Flips the board vertically and swaps the colours of all pieces, the side to move and castling rights
         private static string Mirror(string fen)
         {
