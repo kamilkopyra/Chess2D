@@ -451,6 +451,23 @@ namespace ChessEngine
             return false;
         }
 
+        // Repetition check for the search.
+        // searchStart = MovesPlayed when the search began. A position repeated inside the search counts as
+        // a draw right away (if repeating is good for one side, it can keep repeating). A position that only
+        // repeats moves played before the search needs to have occurred twice already (threefold rule).
+        public bool IsRepetition(int searchStart = 0)
+        {
+            int earlierOccurrences = 0;
+            int oldest = Math.Max(0, history.Count - HalfmoveClock);
+            for (int i = history.Count - 2; i >= oldest; i -= 2)
+            {
+                if (history[i].Hash != Hash) continue;
+                if (i >= searchStart) return true;
+                if (++earlierOccurrences >= 2) return true;
+            }
+            return false;
+        }
+
         // Nikt nie może dać mata: K v K, K+goniec v K, K+skoczek v K, gońce tylko na polach jednego koloru
         public bool IsInsufficientMaterial()
         {

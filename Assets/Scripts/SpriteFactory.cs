@@ -20,6 +20,14 @@ public static class SpriteFactory
         return Mathf.Min(Coverage(d, 0.5f), 1f - Coverage(d, 0.41f));
     });
 
+    // Triangle pointing right (+x), used as an arrow head
+    public static Sprite Triangle => Get("triangle", (x, y) =>
+    {
+        float halfWidth = 0.5f * (1f - x);           // the triangle narrows towards the tip at x = 1
+        float distance = Mathf.Abs(y - 0.5f) - halfWidth;
+        return Mathf.Clamp01(0.5f - distance * Size);
+    });
+
     // Miękka czerwona poświata pod królem w szachu
     public static Sprite Glow => Get("glow", (x, y) =>
     {

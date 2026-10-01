@@ -20,9 +20,9 @@
 #>
 param(
     [string]$Bot = "v2",
-    [int]$Depth = 3,
+    [int]$Depth = 0,
     [string]$OpponentBot = "",
-    [int]$OpponentDepth = 3,
+    [int]$OpponentDepth = 0,
     [int]$StockfishElo = 1320,
     [int]$Games = 100,
     [string]$TimeControl = "60+0.6",
@@ -90,23 +90,33 @@ dotnet build (Join-Path $root "Chess2D.Uci\Chess2D.Uci.csproj") -c Release -nolo
 if ($LASTEXITCODE -ne 0) { throw "Build of Chess2D.Uci failed" }
 $uci = Join-Path $uciOut "Chess2D.Uci.exe"
 
+# Warm-up: start the freshly built engine once and let it search briefly. The first run of new files can be
+# slow (antivirus scan, first load of the code); this way it happens here and not in the middle of a game.
+"uci`nisready`nposition startpos moves e2e4 e7e5 g1f3 b8c6`ngo movetime 300`nquit`n" | & $uci --bot v2 --no-book | Out-Null
+
 # Remove build folders of earlier matches (skipped silently if a match is still using them)
 Get-ChildItem (Join-Path $root "bin\uci") -Directory | Where-Object { $_.Name -ne $stamp } | ForEach-Object {
     try { Remove-Item $_.FullName -Recurse -Force -ErrorAction Stop } catch { }
 }
 
 # --- Match ---
-$botName = "Chess2D-$Bot-d$Depth"
-$engineArgs = @("-engine", "name=$botName", "cmd=$uci", "arg=--bot", "arg=$Bot", "arg=--depth", "arg=$Depth")
+# Depth 0 = don't pass it: fixed-depth bots then use their default (3), time-managed bots (v11+)
+# search as deep as the clock allows
+function Get-ChessEngineArgs([string]$botVersion, [int]$botDepth) {
+    $name = if ($botDepth -gt 0) { "Chess2D-$botVersion-d$botDepth" } else { "Chess2D-$botVersion" }
+    $engine = @("-engine", "name=$name", "cmd=$uci", "arg=--bot", "arg=$botVersion")
+    if ($botDepth -gt 0) { $engine += @("arg=--depth", "arg=$botDepth") }
+    return $name, $engine
+}
+
+$botName, $engineArgs = Get-ChessEngineArgs $Bot $Depth
 
 if ($useStockfish) {
     $opponentName = "Stockfish-$StockfishElo"
     $opponentArgs = @("-engine", "name=$opponentName", "cmd=$stockfish",
                       "option.UCI_LimitStrength=true", "option.UCI_Elo=$StockfishElo")
 } else {
-    $opponentName = "Chess2D-$OpponentBot-d$OpponentDepth"
-    $opponentArgs = @("-engine", "name=$opponentName", "cmd=$uci",
-                      "arg=--bot", "arg=$OpponentBot", "arg=--depth", "arg=$OpponentDepth")
+    $opponentName, $opponentArgs = Get-ChessEngineArgs $OpponentBot $OpponentDepth
 }
 
 $pgn = Join-Path $matchesDir "$stamp`_$botName`_vs_$opponentName.pgn"
@@ -126,7 +136,10 @@ $cutechessArgs = $engineArgs + $opponentArgs + @(
 
 Write-Host "Match: $botName vs $opponentName, $($rounds * 2) games, tc=$TimeControl, concurrency=$Concurrency"
 Write-Host "PGN: $pgn"
-& $cutechess @cutechessArgs 2>&1 | Tee-Object -FilePath $log
+# Warnings that cutechess prints to stderr must not abort the match
+$ErrorActionPreference = "Continue"
+& $cutechess @cutechessArgs 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $log
+$ErrorActionPreference = "Stop"
 
 # --- Summary ---
 $eloLine = Select-String -Path $log -Pattern "Elo difference: (-?[\d.]+|-?inf) \+/- ([\d.]+|nan)" | Select-Object -Last 1

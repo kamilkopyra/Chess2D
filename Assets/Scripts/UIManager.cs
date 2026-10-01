@@ -38,6 +38,10 @@ public class UIManager : MonoBehaviour
     private readonly List<VisualElement> themeOptions = new List<VisualElement>();
     private readonly List<VisualElement> setOptions = new List<VisualElement>();
     private VisualElement coordsSwitch, hintsSwitch;
+    private readonly List<(VisualElement Chip, string Opponent)> opponentChips = new List<(VisualElement, string)>();
+    private readonly List<(VisualElement Chip, GameSettings.PlayerColor Color)> colorChips = new List<(VisualElement, GameSettings.PlayerColor)>();
+    private VisualElement strengthRow;
+    private Label strengthName, strengthValue;
 
     // Koniec gry
     private VisualElement gameOverHero;
@@ -240,6 +244,11 @@ public class UIManager : MonoBehaviour
         botInfoLabel.style.display = DisplayStyle.Flex;
     }
 
+    public void HideBotThinkTime()
+    {
+        if (botInfoLabel != null) botInfoLabel.style.display = DisplayStyle.None;
+    }
+
     void BuildMenu()
     {
         menuCard = NewCard("card--menu");
@@ -277,11 +286,22 @@ public class UIManager : MonoBehaviour
         title.AddToClassList("title");
         settingsCard.Add(title);
 
+        // Two columns: look of the board on the left, opponent and options on the right
+        var columns = new VisualElement();
+        columns.AddToClassList("settings-columns");
+        settingsCard.Add(columns);
+        var left = new VisualElement();
+        left.AddToClassList("settings-column");
+        columns.Add(left);
+        var right = new VisualElement();
+        right.AddToClassList("settings-column");
+        columns.Add(right);
+
         // Kolor planszy
-        settingsCard.Add(SectionTitle("BOARD"));
+        left.Add(SectionTitle("BOARD"));
         var themeGrid = new VisualElement();
         themeGrid.AddToClassList("option-grid");
-        settingsCard.Add(themeGrid);
+        left.Add(themeGrid);
 
         for (int i = 0; i < GameSettings.BoardThemes.Length; i++)
         {
@@ -305,10 +325,10 @@ public class UIManager : MonoBehaviour
         }
 
         // Zestaw figur
-        settingsCard.Add(SectionTitle("PIECES"));
+        left.Add(SectionTitle("PIECES"));
         var setGrid = new VisualElement();
         setGrid.AddToClassList("option-grid");
-        settingsCard.Add(setGrid);
+        left.Add(setGrid);
 
         for (int i = 0; i < GameSettings.PieceSets.Length; i++)
         {
@@ -326,11 +346,59 @@ public class UIManager : MonoBehaviour
             setOptions.Add(option);
         }
 
+        // Opponent: two players or one of the bots (found automatically, newest last)
+        right.Add(SectionTitle("OPPONENT"));
+        var opponentGrid = new VisualElement();
+        opponentGrid.AddToClassList("chip-grid");
+        right.Add(opponentGrid);
+
+        var opponents = new List<string> { GameSettings.HumanOpponent };
+        opponents.AddRange(ChessEngine.BotFactory.AvailableBots());
+        foreach (string opponent in opponents)
+        {
+            string label = opponent == GameSettings.HumanOpponent ? "2 players" : "Bot " + opponent;
+            var chip = Chip(label, () => GameSettings.Opponent = opponent);
+            opponentGrid.Add(chip);
+            opponentChips.Add((chip, opponent));
+        }
+
+        right.Add(SectionTitle("PLAY AS"));
+        var colorGrid = new VisualElement();
+        colorGrid.AddToClassList("chip-grid");
+        right.Add(colorGrid);
+        foreach (var (label, color) in new[] { ("White", GameSettings.PlayerColor.White),
+                                                ("Black", GameSettings.PlayerColor.Black),
+                                                ("Random", GameSettings.PlayerColor.Random) })
+        {
+            var chip = Chip(label, () => GameSettings.HumanColor = color);
+            colorGrid.Add(chip);
+            colorChips.Add((chip, color));
+        }
+
+        // Bot strength: search depth for fixed-depth bots, time per move for time-managed ones
+        strengthRow = new VisualElement();
+        strengthRow.AddToClassList("stepper-row");
+        strengthName = new Label { pickingMode = PickingMode.Ignore };
+        strengthRow.Add(strengthName);
+        var stepper = new VisualElement();
+        stepper.AddToClassList("stepper");
+        stepper.Add(StepperButton("-", () => ChangeStrength(-1)));
+        strengthValue = new Label { pickingMode = PickingMode.Ignore };
+        strengthValue.AddToClassList("stepper__value");
+        stepper.Add(strengthValue);
+        stepper.Add(StepperButton("+", () => ChangeStrength(+1)));
+        strengthRow.Add(stepper);
+        right.Add(strengthRow);
+
+        var note = new Label("Opponent changes apply from the next game.");
+        note.AddToClassList("settings-note");
+        right.Add(note);
+
         // Opcje
-        settingsCard.Add(SectionTitle("OPTIONS"));
-        settingsCard.Add(SwitchRow("Show coordinates", out coordsSwitch,
+        right.Add(SectionTitle("OPTIONS"));
+        right.Add(SwitchRow("Show coordinates", out coordsSwitch,
             () => GameSettings.ShowCoordinates = !GameSettings.ShowCoordinates));
-        settingsCard.Add(SwitchRow("Show legal moves", out hintsSwitch,
+        right.Add(SwitchRow("Show legal moves", out hintsSwitch,
             () => GameSettings.ShowHints = !GameSettings.ShowHints));
 
         var footer = new VisualElement();
@@ -438,6 +506,34 @@ public class UIManager : MonoBehaviour
         coordsSwitch.EnableInClassList("switch--on", GameSettings.ShowCoordinates);
         hintsSwitch.EnableInClassList("switch--on", GameSettings.ShowHints);
 
+        string opponent = GameSettings.Opponent;
+        bool vsBot = opponent != GameSettings.HumanOpponent;
+        foreach (var (chip, value) in opponentChips)
+            chip.EnableInClassList("chip--selected", value == opponent);
+        foreach (var (chip, color) in colorChips)
+        {
+            chip.EnableInClassList("chip--selected", color == GameSettings.HumanColor);
+            chip.EnableInClassList("chip--disabled", !vsBot);
+        }
+
+        // Strength row depends on the kind of bot: time per move, search depth, or nothing (v0, v1)
+        if (vsBot && ChessEngine.BotFactory.IsTimed(opponent))
+        {
+            strengthRow.style.display = DisplayStyle.Flex;
+            strengthName.text = "Time per move";
+            strengthValue.text = $"{GameSettings.BotMoveTimeMs / 1000f:0.0} s";
+        }
+        else if (vsBot && ChessEngine.BotFactory.HasDepth(opponent))
+        {
+            strengthRow.style.display = DisplayStyle.Flex;
+            strengthName.text = "Search depth";
+            strengthValue.text = GameSettings.BotDepth.ToString();
+        }
+        else
+        {
+            strengthRow.style.display = DisplayStyle.None;
+        }
+
         foreach (var (element, type, isWhite) in livePieceImages)
             element.style.backgroundImage = new StyleBackground(GameSettings.GetPieceSprite(type, isWhite));
     }
@@ -490,6 +586,40 @@ public class UIManager : MonoBehaviour
         var label = new Label(text);
         label.AddToClassList("section-title");
         return label;
+    }
+
+    VisualElement Chip(string text, Action onClick)
+    {
+        var chip = new VisualElement();
+        chip.AddToClassList("chip");
+        var label = new Label(text) { pickingMode = PickingMode.Ignore };
+        label.AddToClassList("chip__label");
+        chip.Add(label);
+        chip.AddManipulator(new Clickable(onClick));
+        return chip;
+    }
+
+    VisualElement StepperButton(string text, Action onClick)
+    {
+        var button = new VisualElement();
+        button.AddToClassList("stepper__button");
+        var label = new Label(text) { pickingMode = PickingMode.Ignore };
+        label.AddToClassList("stepper__button-label");
+        button.Add(label);
+        button.AddManipulator(new Clickable(onClick));
+        return button;
+    }
+
+    // -1 / +1 step of the bot strength: 0.2 s of thinking time or one level of search depth
+    void ChangeStrength(int direction)
+    {
+        string opponent = GameSettings.Opponent;
+        if (opponent == GameSettings.HumanOpponent) return;
+
+        if (ChessEngine.BotFactory.IsTimed(opponent))
+            GameSettings.BotMoveTimeMs += direction * GameSettings.BotMoveTimeStepMs;
+        else
+            GameSettings.BotDepth += direction;
     }
 
     VisualElement SwitchRow(string text, out VisualElement switchElement, Action onClick)

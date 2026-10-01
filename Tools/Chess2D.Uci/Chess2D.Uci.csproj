@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <Compile Include="..\..\Assets\Scripts\Engine\**\*.cs" LinkBase="Engine" />
+    <None Include="..\..\Assets\Resources\Books\elite_book.txt" Link="elite_book.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

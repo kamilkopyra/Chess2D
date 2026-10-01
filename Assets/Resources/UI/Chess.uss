@@ -247,7 +247,7 @@ Label {
 }
 
 .card--settings {
-    width: 860px;
+    width: 1180px;
 }
 
 .card--promotion {
@@ -421,6 +421,96 @@ Label {
 
 .settings-columns {
     flex-direction: row;
+    justify-content: space-between;
+}
+
+.settings-column {
+    width: 520px;
+}
+
+.chip-grid {
+    flex-direction: row;
+    flex-wrap: wrap;
+    margin-right: -8px;
+}
+
+.chip {
+    height: 40px;
+    padding: 0 14px;
+    margin: 0 8px 8px 0;
+    border-radius: 12px;
+    justify-content: center;
+    background-color: var(--bg-elevated);
+    border-width: 2px;
+    border-color: rgba(0, 0, 0, 0);
+    transition-property: border-color, background-color, opacity;
+    transition-duration: 0.15s;
+}
+
+.chip:hover {
+    background-color: var(--bg-elevated-hover);
+}
+
+.chip--selected {
+    border-color: var(--accent);
+    background-color: #2F3A28;
+}
+
+.chip--disabled {
+    opacity: 0.35;
+}
+
+.chip__label {
+    font-size: 15px;
+    -unity-text-align: middle-center;
+}
+
+.stepper-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px 8px 18px;
+    margin-top: 6px;
+    border-radius: 14px;
+    background-color: var(--bg-elevated);
+}
+
+.stepper {
+    flex-direction: row;
+    align-items: center;
+}
+
+.stepper__button {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    align-items: center;
+    justify-content: center;
+    background-color: #3A3C42;
+    transition-property: background-color;
+    transition-duration: 0.12s;
+}
+
+.stepper__button:hover {
+    background-color: #474950;
+}
+
+.stepper__button-label {
+    font-size: 20px;
+    -unity-font-definition: url("Fonts/Poppins-SemiBold.ttf");
+    -unity-text-align: middle-center;
+}
+
+.stepper__value {
+    width: 76px;
+    -unity-text-align: middle-center;
+    -unity-font-definition: url("Fonts/Poppins-SemiBold.ttf");
+}
+
+.settings-note {
+    font-size: 14px;
+    color: var(--text-muted);
+    margin-top: 8px;
 }
 
 .settings-footer {

@@ -57,6 +57,42 @@ namespace ChessEngine.Tests
         }
 
         [Test]
+        public void DetectsFirstRepetition()
+        {
+            var position = Position.StartPosition();
+            string[] moves = { "g1f3", "g8f6", "f3g1", "f6g8" };
+
+            foreach (string uci in moves)
+            {
+                Assert.IsFalse(position.IsRepetition());
+                position.MakeMove(position.GetLegalMoves().Find(m => m.ToString() == uci));
+            }
+
+            // Back to the start position with white to move: it occurred once before
+            Assert.IsTrue(position.IsRepetition());
+            Assert.AreNotEqual(GameStatus.ThreefoldRepetition, position.GetStatus());
+        }
+
+        [Test]
+        public void RepetitionOfGameHistoryNeedsThreeOccurrences()
+        {
+            var position = Position.StartPosition();
+            string[] cycle = { "g1f3", "g8f6", "f3g1", "f6g8" };
+
+            foreach (string uci in cycle)
+                position.MakeMove(position.GetLegalMoves().Find(m => m.ToString() == uci));
+
+            // Start position occurred twice, both times before the search: not a draw yet
+            Assert.IsFalse(position.IsRepetition(position.MovesPlayed));
+
+            foreach (string uci in cycle)
+                position.MakeMove(position.GetLegalMoves().Find(m => m.ToString() == uci));
+
+            // Third occurrence: a real threefold repetition
+            Assert.IsTrue(position.IsRepetition(position.MovesPlayed));
+        }
+
+        [Test]
         public void CastlingThroughAttackedSquareIsIllegal()
         {
             // Czarna wieża na f8 atakuje f1, więc krótka roszada białych jest zabroniona, długa dozwolona

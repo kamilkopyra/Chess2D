@@ -5,7 +5,10 @@ namespace ChessEngine
     public abstract class BotBase
     {
         protected static readonly int[] PieceGrades = { 0, 100, 300, 300, 500, 900, 0 };
-        protected static readonly Random rand = new Random();
+        // One random generator per thread: System.Random is not thread-safe, and the game runs
+        // bot searches in background threads (an old search may still be running when a new one starts)
+        [ThreadStatic] private static Random threadRandom;
+        protected static Random rand => threadRandom ??= new Random(Guid.NewGuid().GetHashCode());
 
         protected const int MateScore = 1_000_000;
         protected const int Infinity = 10_000_000;

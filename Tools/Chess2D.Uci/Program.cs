@@ -14,12 +14,14 @@ namespace Chess2D.Uci
         public static int Main(string[] args)
         {
             string botName = "v2";
-            int depth = 3;
+            int? depthArg = null;
+            bool useBook = true;
 
             for (int i = 0; i < args.Length; i++)
             {
                 if (args[i] == "--bot" && i + 1 < args.Length) botName = args[++i];
-                else if (args[i] == "--depth" && i + 1 < args.Length) depth = int.Parse(args[++i]);
+                else if (args[i] == "--depth" && i + 1 < args.Length) depthArg = int.Parse(args[++i]);
+                else if (args[i] == "--no-book") useBook = false;
                 else if (args[i] == "--list")
                 {
                     Console.WriteLine(string.Join(", ", BotFactory.AvailableBots()));
@@ -33,33 +35,20 @@ namespace Chess2D.Uci
                 return 1;
             }
 
+            // Fixed-depth bots default to depth 3. For bots with a time limit the depth is only an upper bound:
+            // without --depth (or with --depth 0) the clock alone decides how deep they search.
+            int depth = depthArg ?? (BotFactory.IsTimed(botName) ? 0 : 3);
+            if (depth == 0) depth = 64;
+
+            // Opening book copied next to the exe from Assets/Resources/Books (used by Bot_v9 and newer)
+            string bookPath = System.IO.Path.Combine(AppContext.BaseDirectory, "elite_book.txt");
+            if (useBook && System.IO.File.Exists(bookPath))
+            {
+                OpeningBook.Default = OpeningBook.Parse(System.IO.File.ReadAllText(bookPath));
+            }
+
             new UciEngine(botName, depth).Run();
             return 0;
-        }
-    }
-
-    // Finds bot classes by name: every class deriving from BotBase called Bot_vN is available as "vN".
-    // New bot versions show up automatically without changing this tool.
-    public static class BotFactory
-    {
-        static readonly Dictionary<string, Type> bots = typeof(BotBase).Assembly.GetTypes()
-            .Where(t => t.IsSubclassOf(typeof(BotBase)) && !t.IsAbstract && t.Name.StartsWith("Bot_"))
-            .ToDictionary(t => t.Name.Substring("Bot_".Length), t => t, StringComparer.OrdinalIgnoreCase);
-
-        public static IEnumerable<string> AvailableBots() => bots.Keys.OrderBy(k => k);
-
-        public static bool Exists(string name) => bots.ContainsKey(name);
-
-        // Bots with an int constructor parameter (e.g. Bot_v2(int depth)) get the search depth
-        public static BotBase Create(string name, int depth)
-        {
-            Type type = bots[name];
-            ConstructorInfo withDepth = type.GetConstructors()
-                .FirstOrDefault(c => c.GetParameters().Length == 1 && c.GetParameters()[0].ParameterType == typeof(int));
-
-            return withDepth != null
-                ? (BotBase)withDepth.Invoke(new object[] { depth })
-                : (BotBase)Activator.CreateInstance(type);
         }
     }
 
@@ -92,7 +81,7 @@ namespace Chess2D.Uci
                         Console.WriteLine("id author Kamil Kopyra");
                         Console.WriteLine($"option name Bot type combo default {botName} " +
                                           string.Join(" ", BotFactory.AvailableBots().Select(b => "var " + b)));
-                        Console.WriteLine($"option name Depth type spin default {depth} min 1 max 10");
+                        Console.WriteLine($"option name Depth type spin default {depth} min 1 max 64");
                         Console.WriteLine("uciok");
                         break;
 
@@ -113,7 +102,7 @@ namespace Chess2D.Uci
                         break;
 
                     case "go":
-                        Go();
+                        Go(tokens);
                         break;
 
                     case "d": // debug helper, not part of UCI: print the current position
@@ -174,7 +163,8 @@ namespace Chess2D.Uci
             }
         }
 
-        void Go()
+        // go [wtime <ms>] [btime <ms>] [winc <ms>] [binc <ms>] [movetime <ms>] ...
+        void Go(string[] tokens)
         {
             if (position.GetLegalMoves().Count == 0)
             {
@@ -182,10 +172,44 @@ namespace Chess2D.Uci
                 return;
             }
 
+            if (bot is ITimedBot timedBot)
+            {
+                int? budget = TimeBudget(tokens);
+                if (budget.HasValue) timedBot.MoveTimeMs = budget.Value;
+            }
+
             var watch = System.Diagnostics.Stopwatch.StartNew();
             Move move = bot.ChooseMove(position);
-            Console.WriteLine($"info depth {depth} time {watch.ElapsedMilliseconds}");
+            int reachedDepth = bot is ITimedBot timed ? timed.LastDepth : depth;
+            Console.WriteLine($"info depth {reachedDepth} time {watch.ElapsedMilliseconds}");
             Console.WriteLine($"bestmove {move}");
+        }
+
+        // Time for this move: "movetime" if given, otherwise a share of the remaining clock.
+        // Roughly 1/25 of the remaining time plus most of the increment, never more than 1/8 of what's left,
+        // minus a margin for communication with the GUI and process scheduling. With an almost empty clock
+        // the bot then plays quickly and wins time back through the increment.
+        int? TimeBudget(string[] tokens)
+        {
+            int? Value(string name)
+            {
+                int i = Array.IndexOf(tokens, name);
+                return i >= 0 && i + 1 < tokens.Length && int.TryParse(tokens[i + 1], out int v) ? v : (int?)null;
+            }
+
+            const int Overhead = 50;
+
+            int? moveTime = Value("movetime");
+            if (moveTime.HasValue) return Math.Max(10, moveTime.Value - Overhead);
+
+            bool white = position.SideToMove == Side.White;
+            int? timeLeft = Value(white ? "wtime" : "btime");
+            if (!timeLeft.HasValue) return null;
+            int increment = Value(white ? "winc" : "binc") ?? 0;
+
+            int budget = timeLeft.Value / 25 + increment * 3 / 4;
+            budget = Math.Min(budget, timeLeft.Value / 8);
+            return Math.Max(10, budget - Overhead);
         }
     }
 }
