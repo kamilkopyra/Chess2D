@@ -42,6 +42,8 @@ powershell -ExecutionPolicy Bypass -File .\match.ps1 -Bot v16 -OpponentBot v15 -
 | `-MaxMoves` | `200` | games longer than this are adjudicated as draws |
 | `-Sprt` | off | stop the match as soon as the result is statistically clear; `-Games` becomes the upper limit |
 | `-Elo0` / `-Elo1` | `0` / `10` | SPRT hypotheses: H0 "not stronger than Elo0", H1 "stronger by at least Elo1" |
+| `-BotSource` / `-OpponentSource` | this repository | build that engine from another copy of the repository (another branch or commit, e.g. a `git worktree`) |
+| `-BotLabel` / `-OpponentLabel` | – | suffix for the engine name in the PGN/log, e.g. `-OpponentLabel old` → `Chess2D-v18-old` |
 
 Games (PGN) and logs are saved in `Tools/matches/`.
 

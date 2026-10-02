@@ -22,6 +22,11 @@
     .\match.ps1 -Bot v16 -OpponentBot v15 -Sprt -Games 1000 -TimeControl 20+0.2 -Concurrency 8
     SPRT test: plays until it is statistically clear whether v16 is at least Elo1 (default 10) stronger
     (H1 accepted) or not better than Elo0 (default 0) (H0 accepted). -Games is only the upper limit then.
+
+.EXAMPLE
+    .\match.ps1 -Bot v19 -OpponentBot v18 -OpponentSource C:\temp\chess2d-old -OpponentLabel old
+    The opponent is built from another copy of the repository (e.g. an older commit or another branch),
+    so the same bot can be compared before and after a change in the shared engine code.
 #>
 param(
     [string]$Bot = "v2",
@@ -36,7 +41,14 @@ param(
     # Sequential probability ratio test: stop as soon as the result is statistically clear
     [switch]$Sprt,
     [double]$Elo0 = 0,
-    [double]$Elo1 = 10
+    [double]$Elo1 = 10,
+    # Repository roots to build each engine from (default: this repository). Lets the two engines
+    # come from different branches or commits, e.g. v18 before and after a change in Position.
+    [string]$BotSource = "",
+    [string]$OpponentSource = "",
+    # Added to the engine name in the PGN/log, e.g. "Chess2D-v18-old"
+    [string]$BotLabel = "",
+    [string]$OpponentLabel = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -93,15 +105,23 @@ if ($Concurrency -gt $safeConcurrency) {
 # --- Build the UCI front-end with the current engine and bot sources ---
 # Every match gets its own build folder, so a running match never locks the exe of the next one.
 $stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-Write-Host "Building Chess2D.Uci..."
-$uciOut = Join-Path $root "bin\uci\$stamp"
-dotnet build (Join-Path $root "Chess2D.Uci\Chess2D.Uci.csproj") -c Release -nologo -v q -o $uciOut
-if ($LASTEXITCODE -ne 0) { throw "Build of Chess2D.Uci failed" }
-$uci = Join-Path $uciOut "Chess2D.Uci.exe"
+# Builds Chess2D.Uci from the repository at $sourceRoot (empty = this one) into its own folder, returns the exe
+function Build-Uci([string]$sourceRoot, [string]$folder) {
+    $repo = if ([string]::IsNullOrEmpty($sourceRoot)) { Split-Path $root -Parent } else { $sourceRoot }
+    Write-Host "Building Chess2D.Uci from $repo..."
+    $out = Join-Path $root "bin\uci\$stamp\$folder"
+    dotnet build (Join-Path $repo "Tools\Chess2D.Uci\Chess2D.Uci.csproj") -c Release -nologo -v q -o $out | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "Build of Chess2D.Uci from $repo failed" }
+    $exe = Join-Path $out "Chess2D.Uci.exe"
 
-# Warm-up: start the freshly built engine once and let it search briefly. The first run of new files can be
-# slow (antivirus scan, first load of the code); this way it happens here and not in the middle of a game.
-"uci`nisready`nposition startpos moves e2e4 e7e5 g1f3 b8c6`ngo movetime 300`nquit`n" | & $uci --bot v2 --no-book | Out-Null
+    # Warm-up: start the freshly built engine once and let it search briefly. The first run of new files can be
+    # slow (antivirus scan, first load of the code); this way it happens here and not in the middle of a game.
+    "uci`nisready`nposition startpos moves e2e4 e7e5 g1f3 b8c6`ngo movetime 300`nquit`n" | & $exe --bot v2 --no-book | Out-Null
+    return $exe
+}
+
+$uci = Build-Uci $BotSource "bot"
+$opponentUci = if ($OpponentSource -ne $BotSource) { Build-Uci $OpponentSource "opponent" } else { $uci }
 
 # Remove build folders of earlier matches (skipped silently if a match is still using them)
 Get-ChildItem (Join-Path $root "bin\uci") -Directory | Where-Object { $_.Name -ne $stamp } | ForEach-Object {
@@ -111,21 +131,22 @@ Get-ChildItem (Join-Path $root "bin\uci") -Directory | Where-Object { $_.Name -n
 # --- Match ---
 # Depth 0 = don't pass it: fixed-depth bots then use their default (3), time-managed bots (v11+)
 # search as deep as the clock allows
-function Get-ChessEngineArgs([string]$botVersion, [int]$botDepth) {
+function Get-ChessEngineArgs([string]$botVersion, [int]$botDepth, [string]$exe, [string]$label) {
     $name = if ($botDepth -gt 0) { "Chess2D-$botVersion-d$botDepth" } else { "Chess2D-$botVersion" }
-    $engine = @("-engine", "name=$name", "cmd=$uci", "arg=--bot", "arg=$botVersion")
+    if ($label) { $name += "-$label" }
+    $engine = @("-engine", "name=$name", "cmd=$exe", "arg=--bot", "arg=$botVersion")
     if ($botDepth -gt 0) { $engine += @("arg=--depth", "arg=$botDepth") }
     return $name, $engine
 }
 
-$botName, $engineArgs = Get-ChessEngineArgs $Bot $Depth
+$botName, $engineArgs = Get-ChessEngineArgs $Bot $Depth $uci $BotLabel
 
 if ($useStockfish) {
     $opponentName = "Stockfish-$StockfishElo"
     $opponentArgs = @("-engine", "name=$opponentName", "cmd=$stockfish",
                       "option.UCI_LimitStrength=true", "option.UCI_Elo=$StockfishElo")
 } else {
-    $opponentName, $opponentArgs = Get-ChessEngineArgs $OpponentBot $OpponentDepth
+    $opponentName, $opponentArgs = Get-ChessEngineArgs $OpponentBot $OpponentDepth $opponentUci $OpponentLabel
 }
 
 $pgn = Join-Path $matchesDir "$stamp`_$botName`_vs_$opponentName.pgn"
