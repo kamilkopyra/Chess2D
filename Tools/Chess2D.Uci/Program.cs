@@ -56,6 +56,7 @@ namespace Chess2D.Uci
     {
         private string botName;
         private int depth;
+        private int hashMb = 32;
         private BotBase bot;
         private Position position = Position.StartPosition();
 
@@ -63,7 +64,14 @@ namespace Chess2D.Uci
         {
             this.botName = botName;
             this.depth = depth;
+            CreateBot();
+        }
+
+        // Creates the bot; the Hash option applies to bots with a resizable transposition table
+        void CreateBot()
+        {
             bot = BotFactory.Create(botName, depth);
+            if (bot is IHashSizeBot hashBot) hashBot.HashMb = hashMb;
         }
 
         public void Run()
@@ -82,6 +90,7 @@ namespace Chess2D.Uci
                         Console.WriteLine($"option name Bot type combo default {botName} " +
                                           string.Join(" ", BotFactory.AvailableBots().Select(b => "var " + b)));
                         Console.WriteLine($"option name Depth type spin default {depth} min 1 max 64");
+                        Console.WriteLine($"option name Hash type spin default {hashMb} min 1 max 1024");
                         Console.WriteLine("uciok");
                         break;
 
@@ -95,6 +104,7 @@ namespace Chess2D.Uci
 
                     case "ucinewgame":
                         position = Position.StartPosition();
+                        if (bot is IHashSizeBot newGameBot) newGameBot.ClearTable();
                         break;
 
                     case "position":
@@ -131,10 +141,17 @@ namespace Chess2D.Uci
                 botName = value;
             else if (name.Equals("Depth", StringComparison.OrdinalIgnoreCase) && int.TryParse(value, out int d))
                 depth = d;
+            else if (name.Equals("Hash", StringComparison.OrdinalIgnoreCase) && int.TryParse(value, out int mb))
+            {
+                // Only resizes the table: the bot (and what it learned so far) stays
+                hashMb = Math.Max(1, Math.Min(1024, mb));
+                if (bot is IHashSizeBot hashBot) hashBot.HashMb = hashMb;
+                return;
+            }
             else
                 return;
 
-            bot = BotFactory.Create(botName, depth);
+            CreateBot();
         }
 
         // position startpos [moves e2e4 e7e5 ...]
