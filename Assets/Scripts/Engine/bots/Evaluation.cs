@@ -127,15 +127,21 @@ namespace ChessEngine
         // Evaluate + structure + king safety (used by Bot_v16 and newer)
         public static int EvaluateWithKingSafety(Position position) => Evaluate(position, true, true);
 
+        // EvaluateWithKingSafety + MopUp computed in one pass over the board (used by Bot_v17 and newer).
+        // Gives exactly the same score as EvaluateWithKingSafety(position) + MopUp(position).
+        public static int EvaluateFull(Position position) => Evaluate(position, true, true, true);
+
         // Only the structure terms, for tests
         public static int Structure(Position position) => Evaluate(position, true) - Evaluate(position, false);
 
         // Only the king safety terms, for tests
         public static int KingSafety(Position position) => Evaluate(position, true, true) - Evaluate(position, true);
 
-        private static int Evaluate(Position position, bool withStructure, bool withKingSafety = false)
+        // withMopUp needs withStructure (it uses the pawn counts collected for it)
+        private static int Evaluate(Position position, bool withStructure, bool withKingSafety = false, bool withMopUp = false)
         {
             int middlegame = 0, endgame = 0, phase = 0;
+            int whiteMaterial = 0, blackMaterial = 0;
 
             // Collected for the structure terms during the same pass over the board.
             // Per side and file (index side * 8 + file): number of pawns and the lowest/highest rank of a pawn on it.
@@ -208,6 +214,7 @@ namespace ChessEngine
                 }
 
                 int sign = piece.Color == Side.White ? 1 : -1;
+                if (sign > 0) whiteMaterial += material; else blackMaterial += material;
                 middlegame += sign * (material + mg);
                 endgame += sign * (material + eg);
                 phase += PhaseWeights[(int)piece.Type];
@@ -228,6 +235,21 @@ namespace ChessEngine
             // Blend: full middlegame score with all pieces on the board, full endgame score with none left
             phase = Math.Min(phase, MaxPhase);
             int score = (middlegame * phase + endgame * (MaxPhase - phase)) / MaxPhase;
+
+            if (withMopUp)
+            {
+                // Same rule as MopUp(): at least a rook more against a side without pawns
+                bool whitePawns = false, blackPawns = false;
+                for (int file = 0; file < 8; file++)
+                {
+                    whitePawns |= pawnCount[file] > 0;
+                    blackPawns |= pawnCount[8 + file] > 0;
+                }
+                if (whiteMaterial - blackMaterial >= 400 && !blackPawns)
+                    score += MopUpBonus(position.KingSquare(Side.White), position.KingSquare(Side.Black));
+                else if (blackMaterial - whiteMaterial >= 400 && !whitePawns)
+                    score -= MopUpBonus(position.KingSquare(Side.Black), position.KingSquare(Side.White));
+            }
 
             return position.SideToMove == Side.White ? score : -score;
         }

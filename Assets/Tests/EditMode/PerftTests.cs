@@ -30,5 +30,18 @@ namespace ChessEngine.Tests
             Assert.AreEqual(Position.FromFen(fen).ToFen(), position.ToFen());
             Assert.IsTrue(position.HashIsConsistent());
         }
+
+        // The fast legal move generator (Bot_v17 and newer) must give the same counts
+        [TestCase(Position.StartFen, 4, 197281)]
+        [TestCase(Kiwipete, 3, 97862)]
+        [TestCase(Position3, 5, 674624)]
+        [TestCase(Position4, 3, 9467)]
+        [TestCase(Position5, 3, 62379)]
+        public void FastPerftMatchesKnownResults(string fen, int depth, long expected)
+        {
+            var position = Position.FromFen(fen);
+            Assert.AreEqual(expected, Perft.CountFast(position, depth));
+            Assert.AreEqual(Position.FromFen(fen).ToFen(), position.ToFen());
+        }
     }
 }

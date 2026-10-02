@@ -27,6 +27,42 @@ namespace ChessEngine.Tests
             }
         }
 
+        // The fast generator must give exactly the same moves as the reference one (make + check + unmake).
+        // Random games from tricky perft positions: pins, en passant, castling, checks, promotions.
+        [TestCase("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")]
+        [TestCase("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1")]
+        [TestCase("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1")]
+        [TestCase("r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1")]
+        [TestCase("rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8")]
+        public void FastLegalMovesMatchReference(string fen)
+        {
+            var random = new System.Random(fen.GetHashCode());
+            var fast = new System.Collections.Generic.List<Move>();
+            var scratch = new System.Collections.Generic.List<Move>();
+
+            for (int game = 0; game < 10; game++)
+            {
+                var position = Position.FromFen(fen);
+                for (int ply = 0; ply < 100; ply++)
+                {
+                    var reference = position.GetLegalMoves();
+                    position.GenerateLegalMovesFast(fast, scratch);
+
+                    CollectionAssert.AreEquivalent(reference, fast, $"position {position.ToFen()}");
+
+                    // Captures-only generator = all pseudo-legal moves filtered to captures and promotions
+                    var pseudo = new System.Collections.Generic.List<Move>();
+                    position.GeneratePseudoLegalMoves(pseudo);
+                    var captures = new System.Collections.Generic.List<Move>();
+                    position.GeneratePseudoLegalCaptures(captures);
+                    CollectionAssert.AreEquivalent(pseudo.FindAll(m => m.IsCapture || m.IsPromotion), captures,
+                                                   $"captures in {position.ToFen()}");
+                    if (reference.Count == 0) break;
+                    position.MakeMove(reference[random.Next(reference.Count)]);
+                }
+            }
+        }
+
         // Null move: only the side to move changes (and the en passant square disappears); undo restores everything
         [TestCase("rnbqkbnr/ppp1pppp/8/8/3pP3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 3")]
         [TestCase("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 5 20")]

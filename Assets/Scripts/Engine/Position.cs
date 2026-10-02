@@ -292,6 +292,101 @@ namespace ChessEngine
             }
         }
 
+        // Same result as GenerateLegalMoves, but faster (used by Bot_v17 and newer): instead of making every move
+        // and checking the king, it finds the pinned pieces once and checks most moves without making them.
+        // Moves are only made and unmade when in check and for en passant (both rare).
+        // `pseudo` is a scratch list the caller can reuse, so nothing is allocated.
+        public void GenerateLegalMovesFast(List<Move> result, List<Move> pseudo)
+        {
+            result.Clear();
+            pseudo.Clear();
+            GeneratePseudoLegalMoves(pseudo);
+
+            Side us = SideToMove, them = us.Opponent();
+            int king = kingSquare[(int)us];
+
+            if (IsSquareAttacked(king, them))
+            {
+                foreach (Move move in pseudo)
+                {
+                    MakeMove(move);
+                    if (!IsSquareAttacked(kingSquare[(int)us], them)) result.Add(move);
+                    UnmakeMove();
+                }
+                return;
+            }
+
+            // Pinned pieces: our piece with an enemy slider behind it on a line from our king.
+            // Up to 8 of them (one per direction); pinDirection is the direction from the king.
+            Span<int> pinnedSquare = stackalloc int[8];
+            Span<int> pinDirection = stackalloc int[8];
+            int pinnedCount = 0;
+            int[][] kingRays = Attacks.Rays[king];
+            for (int d = 0; d < 8; d++)
+            {
+                PieceType slider = d < Attacks.FirstDiagonal ? PieceType.Rook : PieceType.Bishop;
+                int candidate = -1;
+                foreach (int sq in kingRays[d])
+                {
+                    Piece p = board[sq];
+                    if (p.IsEmpty) continue;
+                    if (p.Color == us)
+                    {
+                        if (candidate >= 0) break;   // two of our pieces in a row: nothing is pinned
+                        candidate = sq;
+                        continue;
+                    }
+                    if (candidate >= 0 && (p.Type == slider || p.Type == PieceType.Queen))
+                    {
+                        pinnedSquare[pinnedCount] = candidate;
+                        pinDirection[pinnedCount] = d;
+                        pinnedCount++;
+                    }
+                    break;
+                }
+            }
+
+            foreach (Move move in pseudo)
+            {
+                if (move.From == king)
+                {
+                    // Castling is already checked by the generator. Other king moves: the target must not be
+                    // attacked - with the king lifted off the board, so it doesn't hide the squares behind it.
+                    if ((move.Flags & (MoveFlags.CastleKingside | MoveFlags.CastleQueenside)) != 0)
+                    {
+                        result.Add(move);
+                        continue;
+                    }
+                    Piece kingPiece = board[king];
+                    board[king] = Piece.None;
+                    bool attacked = IsSquareAttacked(move.To, them);
+                    board[king] = kingPiece;
+                    if (!attacked) result.Add(move);
+                    continue;
+                }
+
+                if (move.IsEnPassant)
+                {
+                    // Removes two pawns from one rank at once, which can expose the king sideways: just try it
+                    MakeMove(move);
+                    if (!IsSquareAttacked(kingSquare[(int)us], them)) result.Add(move);
+                    UnmakeMove();
+                    continue;
+                }
+
+                // A pinned piece may only move along the pin line (towards the king or onto the pinning piece)
+                int pin = -1;
+                for (int i = 0; i < pinnedCount; i++)
+                {
+                    if (pinnedSquare[i] == move.From) pin = pinDirection[i];
+                }
+                if (pin < 0 || Array.IndexOf(kingRays[pin], move.To) >= 0)
+                {
+                    result.Add(move);
+                }
+            }
+        }
+
         public bool HasAnyLegalMove()
         {
             var pseudo = new List<Move>(64);
@@ -324,7 +419,13 @@ namespace ChessEngine
         }
 
         // Ruchy "prawie legalne": zgodne z zasadami ruchu figur, ale mogą zostawić własnego króla w szachu
-        public void GeneratePseudoLegalMoves(List<Move> moves)
+        public void GeneratePseudoLegalMoves(List<Move> moves) => GeneratePseudoLegal(moves, false);
+
+        // Only captures (including en passant) and promotions, pseudo-legal - for quiescence search (Bot_v17 and newer).
+        // Same moves as GeneratePseudoLegalMoves filtered to IsCapture || IsPromotion, without generating the rest.
+        public void GeneratePseudoLegalCaptures(List<Move> moves) => GeneratePseudoLegal(moves, true);
+
+        private void GeneratePseudoLegal(List<Move> moves, bool capturesOnly)
         {
             Side us = SideToMove, them = us.Opponent();
 
@@ -336,41 +437,43 @@ namespace ChessEngine
                 switch (p.Type)
                 {
                     case PieceType.Pawn:
-                        GeneratePawnMoves(sq, us, them, moves);
+                        GeneratePawnMoves(sq, us, them, moves, capturesOnly);
                         break;
                     case PieceType.Knight:
-                        GenerateStepMoves(sq, Attacks.Knight[sq], them, moves);
+                        GenerateStepMoves(sq, Attacks.Knight[sq], them, moves, capturesOnly);
                         break;
                     case PieceType.King:
-                        GenerateStepMoves(sq, Attacks.King[sq], them, moves);
+                        GenerateStepMoves(sq, Attacks.King[sq], them, moves, capturesOnly);
                         break;
                     case PieceType.Bishop:
-                        GenerateSlidingMoves(sq, Attacks.FirstDiagonal, 8, them, moves);
+                        GenerateSlidingMoves(sq, Attacks.FirstDiagonal, 8, them, moves, capturesOnly);
                         break;
                     case PieceType.Rook:
-                        GenerateSlidingMoves(sq, Attacks.FirstOrthogonal, 4, them, moves);
+                        GenerateSlidingMoves(sq, Attacks.FirstOrthogonal, 4, them, moves, capturesOnly);
                         break;
                     case PieceType.Queen:
-                        GenerateSlidingMoves(sq, 0, 8, them, moves);
+                        GenerateSlidingMoves(sq, 0, 8, them, moves, capturesOnly);
                         break;
                 }
             }
 
-            GenerateCastlingMoves(us, them, moves);
+            if (!capturesOnly) GenerateCastlingMoves(us, them, moves);
         }
 
-        private void GeneratePawnMoves(int sq, Side us, Side them, List<Move> moves)
+        private void GeneratePawnMoves(int sq, Side us, Side them, List<Move> moves, bool capturesOnly)
         {
             int forward = us == Side.White ? 8 : -8;
             int startRank = us == Side.White ? 1 : 6;
+            int lastRank = us == Side.White ? 7 : 0;
 
             int one = sq + forward;
-            if (board[one].IsEmpty)
+            // With capturesOnly a push is only generated when it promotes
+            if (board[one].IsEmpty && (!capturesOnly || Square.Rank(one) == lastRank))
             {
                 AddPawnMove(sq, one, MoveFlags.None, us, moves);
 
                 int two = one + forward;
-                if (Square.Rank(sq) == startRank && board[two].IsEmpty)
+                if (!capturesOnly && Square.Rank(sq) == startRank && board[two].IsEmpty)
                     moves.Add(new Move(sq, two, MoveFlags.DoublePawnPush));
             }
 
@@ -400,17 +503,20 @@ namespace ChessEngine
             }
         }
 
-        private void GenerateStepMoves(int sq, int[] targets, Side them, List<Move> moves)
+        private void GenerateStepMoves(int sq, int[] targets, Side them, List<Move> moves, bool capturesOnly)
         {
             foreach (int target in targets)
             {
                 Piece p = board[target];
-                if (p.IsEmpty) moves.Add(new Move(sq, target));
+                if (p.IsEmpty)
+                {
+                    if (!capturesOnly) moves.Add(new Move(sq, target));
+                }
                 else if (p.Color == them) moves.Add(new Move(sq, target, MoveFlags.Capture));
             }
         }
 
-        private void GenerateSlidingMoves(int sq, int firstDirection, int endDirection, Side them, List<Move> moves)
+        private void GenerateSlidingMoves(int sq, int firstDirection, int endDirection, Side them, List<Move> moves, bool capturesOnly)
         {
             int[][] rays = Attacks.Rays[sq];
             for (int d = firstDirection; d < endDirection; d++)
@@ -420,7 +526,7 @@ namespace ChessEngine
                     Piece p = board[target];
                     if (p.IsEmpty)
                     {
-                        moves.Add(new Move(sq, target));
+                        if (!capturesOnly) moves.Add(new Move(sq, target));
                         continue;
                     }
                     if (p.Color == them) moves.Add(new Move(sq, target, MoveFlags.Capture));

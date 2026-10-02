@@ -25,6 +25,30 @@ namespace ChessEngine
             return nodes;
         }
 
+        // The same count with the fast generator (GenerateLegalMovesFast), to check it against known results
+        public static long CountFast(Position position, int depth)
+        {
+            return CountFast(position, depth, new List<Move>(64));
+        }
+
+        private static long CountFast(Position position, int depth, List<Move> scratch)
+        {
+            if (depth == 0) return 1;
+
+            var moves = new List<Move>(48);
+            position.GenerateLegalMovesFast(moves, scratch);
+            if (depth == 1) return moves.Count;
+
+            long nodes = 0;
+            foreach (Move move in moves)
+            {
+                position.MakeMove(move);
+                nodes += CountFast(position, depth - 1, scratch);
+                position.UnmakeMove();
+            }
+            return nodes;
+        }
+
         // Wynik osobno dla każdego ruchu z pozycji (przydatne do szukania błędów)
         public static Dictionary<string, long> Divide(Position position, int depth)
         {

@@ -95,6 +95,19 @@ namespace ChessEngine.Tests
             Assert.Greater(Evaluation.KingSafety(Position.FromFen(safer)), Evaluation.KingSafety(Position.FromFen(lessSafe)));
         }
 
+        // The one-pass evaluation of Bot_v17 must give exactly the same score as its separate parts
+        [TestCase("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3")]
+        [TestCase("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1")]
+        [TestCase("8/8/8/4k3/8/8/8/K6Q w - - 0 1")]   // mop-up applies (White)
+        [TestCase("8/8/8/4k3/8/8/8/K6Q b - - 0 1")]
+        [TestCase("4k3/8/8/8/8/1r6/8/4K3 w - - 0 1")] // mop-up applies (Black)
+        [TestCase("4k3/8/8/8/8/1r6/7P/4K3 b - - 0 1")]
+        public void FullEvaluationEqualsItsParts(string fen)
+        {
+            var position = Position.FromFen(fen);
+            Assert.AreEqual(Evaluation.EvaluateWithKingSafety(position) + Evaluation.MopUp(position), Evaluation.EvaluateFull(position));
+        }
+
         // Flips the board vertically and swaps the colours of all pieces, the side to move and castling rights
         private static string Mirror(string fen)
         {
