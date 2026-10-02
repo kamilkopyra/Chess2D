@@ -230,8 +230,14 @@ Write-Host "PGN: $pgn"
 # Warnings that the runner prints to stderr must not abort the match.
 # fastchess warns on every move that our engine reports no score; those lines are left out.
 $ErrorActionPreference = "Continue"
-& $runner @runnerArgs 2>&1 | ForEach-Object { "$_" -replace "\x1b\[[0-9;]*m", "" } |
-    Where-Object { $_ -notmatch "No info line available to extract score" } | Tee-Object -FilePath $log
+# fastchess saves its state (config.json, for -recover) in the current directory: run it in Tools\matches
+Push-Location $matchesDir
+try {
+    & $runner @runnerArgs 2>&1 | ForEach-Object { "$_" -replace "\x1b\[[0-9;]*m", "" } |
+        Where-Object { $_ -notmatch "No info line available to extract score" } | Tee-Object -FilePath $log
+} finally {
+    Pop-Location
+}
 $ErrorActionPreference = "Stop"
 
 # --- Summary ---

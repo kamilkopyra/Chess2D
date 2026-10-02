@@ -156,6 +156,32 @@ namespace ChessEngine.Tests
             Assert.Greater(checkedPositions, 10000);
         }
 
+        [TestCase("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3")]
+        [TestCase("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1")]
+        [TestCase("r4rk1/pp3ppp/2n5/3N4/8/5Q2/PP3PPP/R4RK1 b - - 0 1")]
+        [TestCase("6k1/5ppp/8/3n4/8/2B5/5PPP/3R2K1 w - - 0 1")]
+        public void ActivityIsSymmetricForBothColours(string fen)
+        {
+            Assert.AreEqual(Evaluation.Activity(Position.FromFen(fen)), Evaluation.Activity(Position.FromFen(Mirror(fen))));
+        }
+
+        [Test]
+        public void ActivityIsZeroInTheStartPosition()
+        {
+            Assert.AreEqual(0, Evaluation.Activity(Position.StartPosition()));
+        }
+
+        // Each pair: the first position is better for White than the second because of one activity feature
+        [TestCase("4k3/8/8/8/3N4/8/8/4K3 w - - 0 1", "4k3/8/8/8/8/8/8/N3K3 w - - 0 1")]                 // mobile vs cornered knight
+        [TestCase("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1", "4k3/8/8/3p4/8/4P3/8/4K3 w - - 0 1")]             // nothing to attack: equal-ish
+        [TestCase("4k3/8/8/3n4/4P3/8/8/4K3 w - - 0 1", "4k3/8/8/3n4/8/4P3/8/4K3 w - - 0 1")]             // pawn attacks a knight
+        [TestCase("4k3/p7/8/4N3/3P4/8/8/4K3 w - - 0 1", "4k3/p7/8/8/3P4/2N5/8/4K3 w - - 0 1")]           // knight outpost vs at home
+        [TestCase("6k1/5pp1/8/6NQ/8/8/5PPP/6K1 w - - 0 1", "6k1/5pp1/8/8/8/8/5PPP/QN4K1 w - - 0 1")]    // attacking the king zone
+        public void ActivityRewardsBetterFeature(string better, string worse)
+        {
+            Assert.GreaterOrEqual(Evaluation.Activity(Position.FromFen(better)), Evaluation.Activity(Position.FromFen(worse)));
+        }
+
         // Flips the board vertically and swaps the colours of all pieces, the side to move and castling rights
         private static string Mirror(string fen)
         {

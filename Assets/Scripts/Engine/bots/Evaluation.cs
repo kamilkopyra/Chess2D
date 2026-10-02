@@ -366,6 +366,157 @@ namespace ChessEngine
             return score;
         }
 
+        // ===== Piece activity (used by Bot_v22 and newer, on top of EvaluateFull) =====
+
+        // Mobility: per safe square (not ours, not attacked by an enemy pawn) above/below a typical count.
+        // Index = PieceType; pawns and kings have no mobility term.
+        private static readonly int[] MobilityBase = { 0, 0, 4, 7, 7, 14, 0 };
+        private static readonly int[] MobilityMiddlegame = { 0, 0, 4, 5, 2, 1, 0 };
+        private static readonly int[] MobilityEndgame = { 0, 0, 4, 5, 4, 2, 0 };
+
+        // King attack: "attack units" per square of the enemy king zone a piece attacks
+        private static readonly int[] KingAttackWeight = { 0, 0, 2, 2, 3, 5, 0 };
+        private const int KingAttackMaxPenalty = 500;
+
+        // Threats: our pawn attacks an enemy piece, our minor piece attacks an enemy rook or queen,
+        // an enemy piece is attacked and not defended at all
+        private const int PawnThreatMiddlegame = 40, PawnThreatEndgame = 30;
+        private const int MinorThreatMiddlegame = 25, MinorThreatEndgame = 20;
+        private const int HangingMiddlegame = 15, HangingEndgame = 15;
+
+        // Outpost: a knight on the enemy half, defended by our pawn, that no enemy pawn can ever attack
+        private const int OutpostMiddlegame = 20, OutpostEndgame = 10;
+
+        // EvaluateFull + piece activity: mobility, attacks on the enemy king zone, threats and knight outposts.
+        // When one side has only its king left, the activity terms are left out: mating it needs the mop-up plan
+        // (box the king in), and mobility would pull the other way (free squares for our pieces).
+        public static int EvaluateWithActivity(Position position)
+        {
+            ulong kings = position.Pieces(PieceType.King);
+            bool loneKing = (position.Pieces(Side.White) & ~kings) == 0 || (position.Pieces(Side.Black) & ~kings) == 0;
+            return loneKing ? EvaluateFull(position) : EvaluateFull(position) + Activity(position);
+        }
+
+        // Only the activity terms, from the point of view of the side to move, tapered like Evaluate
+        public static int Activity(Position position)
+        {
+            ulong occupied = position.Occupied;
+
+            // Squares attacked by each side's pawns, and by all pieces of each side
+            Span<ulong> pawnAttacks = stackalloc ulong[2];
+            Span<ulong> allAttacks = stackalloc ulong[2];
+            for (int side = 0; side < 2; side++)
+            {
+                ulong pawns = position.Pieces(PieceType.Pawn, (Side)side);
+                ulong attacks = 0;
+                while (pawns != 0) attacks |= Bitboards.PawnAttacks[side][Bits.PopLowest(ref pawns)];
+                pawnAttacks[side] = attacks;
+                allAttacks[side] = attacks | Bitboards.KingAttacks[position.KingSquare((Side)side)];
+            }
+
+            // First pass: attacks of the pieces (they are needed for "defended" before the threats are scored)
+            int middlegame = 0, endgame = 0, phase = 0;
+            Span<int> kingUnits = stackalloc int[2];
+            Span<int> kingAttackers = stackalloc int[2];
+            for (int side = 0; side < 2; side++)
+            {
+                int them = 1 - side;
+                int sign = side == (int)Side.White ? 1 : -1;
+                ulong own = position.Pieces((Side)side);
+                ulong safe = ~own & ~pawnAttacks[them];
+                ulong enemyKingZone = Bitboards.KingAttacks[position.KingSquare((Side)them)];
+
+                for (int type = (int)PieceType.Knight; type <= (int)PieceType.Queen; type++)
+                {
+                    ulong pieces = position.Pieces((PieceType)type, (Side)side);
+                    phase += Bits.PopCount(pieces) * PhaseWeights[type];
+                    while (pieces != 0)
+                    {
+                        int square = Bits.PopLowest(ref pieces);
+                        ulong attacks = PieceAttacks((PieceType)type, square, occupied);
+                        allAttacks[side] |= attacks;
+
+                        int mobility = Bits.PopCount(attacks & safe) - MobilityBase[type];
+                        middlegame += sign * mobility * MobilityMiddlegame[type];
+                        endgame += sign * mobility * MobilityEndgame[type];
+
+                        ulong zone = attacks & enemyKingZone;
+                        if (zone != 0)
+                        {
+                            kingAttackers[side]++;
+                            kingUnits[side] += KingAttackWeight[type] * Bits.PopCount(zone);
+                        }
+                    }
+                }
+            }
+
+            for (int side = 0; side < 2; side++)
+            {
+                int them = 1 - side;
+                int sign = side == (int)Side.White ? 1 : -1;
+
+                // King attack: only with at least two attackers, growing faster than linearly; middlegame only
+                if (kingAttackers[side] >= 2)
+                {
+                    int units = kingUnits[side];
+                    middlegame += sign * Math.Min(KingAttackMaxPenalty, units * units / 4);
+                }
+
+                // Threats against the enemy pieces (pawns and the king are not counted)
+                ulong enemyPieces = position.Pieces((Side)them) & ~position.Pieces(PieceType.Pawn) & ~position.Pieces(PieceType.King);
+                int pawnThreats = Bits.PopCount(pawnAttacks[side] & enemyPieces);
+                middlegame += sign * pawnThreats * PawnThreatMiddlegame;
+                endgame += sign * pawnThreats * PawnThreatEndgame;
+
+                ulong minorAttacks = 0;
+                ulong minors = position.Pieces(PieceType.Knight, (Side)side) | position.Pieces(PieceType.Bishop, (Side)side);
+                while (minors != 0)
+                {
+                    int square = Bits.PopLowest(ref minors);
+                    minorAttacks |= PieceAttacks(position[square].Type, square, occupied);
+                }
+                ulong heavy = (position.Pieces(PieceType.Rook) | position.Pieces(PieceType.Queen)) & position.Pieces((Side)them);
+                int minorThreats = Bits.PopCount(minorAttacks & heavy);
+                middlegame += sign * minorThreats * MinorThreatMiddlegame;
+                endgame += sign * minorThreats * MinorThreatEndgame;
+
+                int hanging = Bits.PopCount(enemyPieces & allAttacks[side] & ~allAttacks[them]);
+                middlegame += sign * hanging * HangingMiddlegame;
+                endgame += sign * hanging * HangingEndgame;
+
+                // Knight outposts on the enemy half (ranks 4-6 from our side)
+                ulong knights = position.Pieces(PieceType.Knight, (Side)side);
+                ulong enemyPawns = position.Pieces(PieceType.Pawn, (Side)them);
+                while (knights != 0)
+                {
+                    int square = Bits.PopLowest(ref knights);
+                    int relativeRank = side == (int)Side.White ? Square.Rank(square) : 7 - Square.Rank(square);
+                    if (relativeRank < 3 || relativeRank > 5) continue;
+                    if ((pawnAttacks[side] & (1UL << square)) == 0) continue;
+                    // No enemy pawn on the neighbouring files in front of the knight can ever attack it
+                    if ((enemyPawns & Bitboards.PassedPawnMask[side][square] & Bitboards.AdjacentFiles[Square.File(square)]) != 0) continue;
+                    middlegame += sign * OutpostMiddlegame;
+                    endgame += sign * OutpostEndgame;
+                }
+            }
+
+            phase = Math.Min(phase, MaxPhase);
+            int score = (middlegame * phase + endgame * (MaxPhase - phase)) / MaxPhase;
+            return position.SideToMove == Side.White ? score : -score;
+        }
+
+        private static ulong PieceAttacks(PieceType type, int square, ulong occupied)
+        {
+            switch (type)
+            {
+                case PieceType.Knight: return Bitboards.KnightAttacks[square];
+                case PieceType.Bishop: return Bitboards.BishopAttacks(square, occupied);
+                case PieceType.Rook: return Bitboards.RookAttacks(square, occupied);
+                case PieceType.Queen: return Bitboards.QueenAttacks(square, occupied);
+                default: return 0;
+            }
+        }
+
         // Tables are drawn with rank 8 first. For White, a1 (square 0) is the last row: index = square ^ 56.
         // Black sees the board upside down, so its pieces use the square itself (a8 for Black is like a1 for White).
         private static int TableIndex(int square, Side color)
