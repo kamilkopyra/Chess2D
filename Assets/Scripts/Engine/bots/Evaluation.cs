@@ -122,6 +122,10 @@ namespace ChessEngine
         private static readonly int[][] MiddlegameTables = { null, PawnMiddlegame, Knight, Bishop, Rook, Queen, KingMiddlegame };
         private static readonly int[][] EndgameTables = { null, PawnEndgame, Knight, Bishop, Rook, Queen, KingEndgame };
 
+        // Copies of the piece-square tables (for TunableEvaluation)
+        public static int[] MiddlegameTable(PieceType type) => (int[])MiddlegameTables[(int)type].Clone();
+        public static int[] EndgameTable(PieceType type) => (int[])EndgameTables[(int)type].Clone();
+
         // Score from the point of view of the side to move (positive = good for the side to move)
         public static int Evaluate(Position position) => Evaluate(position, false);
 
