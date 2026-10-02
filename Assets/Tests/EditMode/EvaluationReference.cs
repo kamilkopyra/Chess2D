@@ -1,13 +1,16 @@
 using System;
 
-namespace ChessEngine
+namespace ChessEngine.Tests
 {
+    // The evaluation exactly as it was before it was rewritten on bitboards (Bot_v18 era), kept unchanged
+    // as the reference: the bitboard Evaluation must give the same score for every position.
+    //
     // Position evaluation: material + piece-square tables, with a tapered score that blends a
     // middlegame and an endgame evaluation depending on how much material is left.
     // Tables and piece values are the "Simplified Evaluation Function" by Tomasz Michniewski
     // (https://www.chessprogramming.org/Simplified_Evaluation_Function); the endgame pawn table
     // is an extra one that rewards passed-pawn-like advancement more strongly.
-    public static class Evaluation
+    internal static class EvaluationReference
     {
         // Indexed by PieceType: None, Pawn, Knight, Bishop, Rook, Queen, King
         public static readonly int[] PieceValues = { 0, 100, 320, 330, 500, 900, 0 };
@@ -118,10 +121,6 @@ namespace ChessEngine
             -50, -30, -30, -30, -30, -30, -30, -50,
         };
 
-        // Tables by PieceType (index 0 unused); knights, bishops, rooks and queens use one table for both phases
-        private static readonly int[][] MiddlegameTables = { null, PawnMiddlegame, Knight, Bishop, Rook, Queen, KingMiddlegame };
-        private static readonly int[][] EndgameTables = { null, PawnEndgame, Knight, Bishop, Rook, Queen, KingEndgame };
-
         // Score from the point of view of the side to move (positive = good for the side to move)
         public static int Evaluate(Position position) => Evaluate(position, false);
 
@@ -147,49 +146,93 @@ namespace ChessEngine
             int middlegame = 0, endgame = 0, phase = 0;
             int whiteMaterial = 0, blackMaterial = 0;
 
-            // Material and piece-square tables, piece type by piece type from the bitboards.
-            // Only sums of integers, so the order doesn't change the result.
-            for (int side = 0; side < 2; side++)
+            // Collected for the structure terms during the same pass over the board.
+            // Per side and file (index side * 8 + file): number of pawns and the lowest/highest rank of a pawn on it.
+            // stackalloc: no garbage for the collector, this runs millions of times per search.
+            // Without structure terms nothing is allocated, so the older bots run exactly as before.
+            Span<int> pawnCount = withStructure ? stackalloc int[16] : default;
+            Span<int> minRank = withStructure ? stackalloc int[16] : default;
+            Span<int> maxRank = withStructure ? stackalloc int[16] : default;
+            Span<int> bishops = withStructure ? stackalloc int[2] : default;
+            Span<int> pieceSquares = withStructure ? stackalloc int[64] : default;   // squares of pawns and rooks
+            int pieceCount = 0;
+            if (withStructure)
             {
-                int material = 0, mg = 0, eg = 0;
-                for (int type = (int)PieceType.Pawn; type <= (int)PieceType.King; type++)
+                minRank.Fill(8);
+                maxRank.Fill(-1);
+            }
+
+            for (int square = 0; square < 64; square++)
+            {
+                Piece piece = position[square];
+                if (piece.IsEmpty) continue;
+
+                if (withStructure)
                 {
-                    ulong bits = position.Pieces((PieceType)type, (Side)side);
-                    if (bits == 0) continue;
-
-                    int count = Bits.PopCount(bits);
-                    material += count * PieceValues[type];
-                    phase += count * PhaseWeights[type];
-
-                    int[] mgTable = MiddlegameTables[type], egTable = EndgameTables[type];
-                    while (bits != 0)
+                    int side = (int)piece.Color;
+                    if (piece.Type == PieceType.Pawn)
                     {
-                        int index = TableIndex(Bits.PopLowest(ref bits), (Side)side);
-                        mg += mgTable[index];
-                        eg += egTable[index];
+                        int file = Square.File(square), rank = Square.Rank(square);
+                        pawnCount[side * 8 + file]++;
+                        minRank[side * 8 + file] = Math.Min(minRank[side * 8 + file], rank);
+                        maxRank[side * 8 + file] = Math.Max(maxRank[side * 8 + file], rank);
+                        pieceSquares[pieceCount++] = square;
+                    }
+                    else if (piece.Type == PieceType.Rook)
+                    {
+                        pieceSquares[pieceCount++] = square;
+                    }
+                    else if (piece.Type == PieceType.Bishop)
+                    {
+                        bishops[side]++;
                     }
                 }
 
-                int sign = side == (int)Side.White ? 1 : -1;
-                if (sign > 0) whiteMaterial = material; else blackMaterial = material;
+                int index = TableIndex(square, piece.Color);
+                int material = PieceValues[(int)piece.Type];
+                int mg, eg;
+
+                switch (piece.Type)
+                {
+                    case PieceType.Pawn:
+                        mg = PawnMiddlegame[index];
+                        eg = PawnEndgame[index];
+                        break;
+                    case PieceType.Knight:
+                        mg = eg = Knight[index];
+                        break;
+                    case PieceType.Bishop:
+                        mg = eg = Bishop[index];
+                        break;
+                    case PieceType.Rook:
+                        mg = eg = Rook[index];
+                        break;
+                    case PieceType.Queen:
+                        mg = eg = Queen[index];
+                        break;
+                    default: // King
+                        mg = KingMiddlegame[index];
+                        eg = KingEndgame[index];
+                        break;
+                }
+
+                int sign = piece.Color == Side.White ? 1 : -1;
+                if (sign > 0) whiteMaterial += material; else blackMaterial += material;
                 middlegame += sign * (material + mg);
                 endgame += sign * (material + eg);
+                phase += PhaseWeights[(int)piece.Type];
             }
-
-            ulong whitePawns = position.Pieces(PieceType.Pawn, Side.White);
-            ulong blackPawns = position.Pieces(PieceType.Pawn, Side.Black);
 
             if (withStructure)
             {
-                AddStructure(position, Side.White, whitePawns, blackPawns, ref middlegame, ref endgame);
-                AddStructure(position, Side.Black, blackPawns, whitePawns, ref middlegame, ref endgame);
+                AddStructure(position, pawnCount, minRank, maxRank, bishops, pieceSquares.Slice(0, pieceCount),
+                             ref middlegame, ref endgame);
             }
 
             if (withKingSafety)
             {
                 // Only in the middlegame part: in the endgame the king should leave its shelter and be active
-                middlegame += KingShelter(position, Side.White, whitePawns, blackPawns)
-                            - KingShelter(position, Side.Black, blackPawns, whitePawns);
+                middlegame += KingShelter(position, Side.White, pawnCount) - KingShelter(position, Side.Black, pawnCount);
             }
 
             // Blend: full middlegame score with all pieces on the board, full endgame score with none left
@@ -199,9 +242,15 @@ namespace ChessEngine
             if (withMopUp)
             {
                 // Same rule as MopUp(): at least a rook more against a side without pawns
-                if (whiteMaterial - blackMaterial >= 400 && blackPawns == 0)
+                bool whitePawns = false, blackPawns = false;
+                for (int file = 0; file < 8; file++)
+                {
+                    whitePawns |= pawnCount[file] > 0;
+                    blackPawns |= pawnCount[8 + file] > 0;
+                }
+                if (whiteMaterial - blackMaterial >= 400 && !blackPawns)
                     score += MopUpBonus(position.KingSquare(Side.White), position.KingSquare(Side.Black));
-                else if (blackMaterial - whiteMaterial >= 400 && whitePawns == 0)
+                else if (blackMaterial - whiteMaterial >= 400 && !whitePawns)
                     score -= MopUpBonus(position.KingSquare(Side.Black), position.KingSquare(Side.White));
             }
 
@@ -260,72 +309,79 @@ namespace ChessEngine
         private const int RookSemiOpenFileMiddlegame = 12, RookSemiOpenFileEndgame = 5;   // only enemy pawns on the file
         private const int RookSeventhMiddlegame = 20, RookSeventhEndgame = 30;            // rook on the enemy's second rank
 
-        // Passed, doubled and isolated pawns, the bishop pair and rook placement of one side (added for White,
-        // subtracted for Black), added to the middlegame and endgame scores before they are blended
-        private static void AddStructure(Position position, Side color, ulong ownPawns, ulong enemyPawns,
-                                         ref int middlegame, ref int endgame)
+        // Passed, doubled and isolated pawns, the bishop pair and rook placement (White minus Black),
+        // added to the middlegame and endgame scores before they are blended
+        private static void AddStructure(Position position, Span<int> pawnCount, Span<int> minRank, Span<int> maxRank,
+                                         Span<int> bishops, Span<int> pieceSquares, ref int middlegame, ref int endgame)
         {
-            int us = (int)color;
-            int sign = color == Side.White ? 1 : -1;
 
-            ulong pawns = ownPawns;
-            while (pawns != 0)
+            for (int i = 0; i < pieceSquares.Length; i++)
             {
-                int square = Bits.PopLowest(ref pawns);
-                int file = Square.File(square);
-                int relativeRank = color == Side.White ? Square.Rank(square) : 7 - Square.Rank(square);
+                int square = pieceSquares[i];
+                Piece piece = position[square];
 
-                // Passed: no enemy pawn in front of it on its own file or the neighbouring ones.
-                // Of doubled pawns only the front one counts, the rear one is blocked by its own pawn.
-                if ((ownPawns & Bitboards.ForwardFile[us][square]) == 0
-                    && (enemyPawns & Bitboards.PassedPawnMask[us][square]) == 0)
+                Side color = piece.Color;
+                int us = (int)color, them = 1 - us;
+                int sign = color == Side.White ? 1 : -1;
+                int file = Square.File(square), rank = Square.Rank(square);
+                int relativeRank = color == Side.White ? rank : 7 - rank;
+
+                if (piece.Type == PieceType.Pawn)
                 {
-                    middlegame += sign * PassedMiddlegame[relativeRank];
-                    endgame += sign * PassedEndgame[relativeRank];
+                    // Passed: no enemy pawn in front of it on its own file or the neighbouring ones.
+                    // Of doubled pawns only the front one counts, the rear one is blocked by its own pawn.
+                    bool passed = color == Side.White ? maxRank[us * 8 + file] == rank : minRank[us * 8 + file] == rank;
+                    for (int f = Math.Max(0, file - 1); f <= Math.Min(7, file + 1) && passed; f++)
+                    {
+                        passed = color == Side.White ? maxRank[them * 8 + f] <= rank : minRank[them * 8 + f] >= rank;
+                    }
+                    if (passed)
+                    {
+                        middlegame += sign * PassedMiddlegame[relativeRank];
+                        endgame += sign * PassedEndgame[relativeRank];
+                    }
+
+                    bool isolated = (file == 0 || pawnCount[us * 8 + file - 1] == 0) && (file == 7 || pawnCount[us * 8 + file + 1] == 0);
+                    if (isolated)
+                    {
+                        middlegame += sign * IsolatedMiddlegame;
+                        endgame += sign * IsolatedEndgame;
+                    }
                 }
-
-                if ((ownPawns & Bitboards.AdjacentFiles[file]) == 0)
+                else // Rook
                 {
-                    middlegame += sign * IsolatedMiddlegame;
-                    endgame += sign * IsolatedEndgame;
+                    if (pawnCount[us * 8 + file] == 0)
+                    {
+                        bool open = pawnCount[them * 8 + file] == 0;
+                        middlegame += sign * (open ? RookOpenFileMiddlegame : RookSemiOpenFileMiddlegame);
+                        endgame += sign * (open ? RookOpenFileEndgame : RookSemiOpenFileEndgame);
+                    }
+                    if (relativeRank == 6)
+                    {
+                        middlegame += sign * RookSeventhMiddlegame;
+                        endgame += sign * RookSeventhEndgame;
+                    }
                 }
             }
 
-            ulong rooks = position.Pieces(PieceType.Rook, color);
-            while (rooks != 0)
+            for (int side = 0; side < 2; side++)
             {
-                int square = Bits.PopLowest(ref rooks);
-                ulong file = Bitboards.Files[Square.File(square)];
-                int relativeRank = color == Side.White ? Square.Rank(square) : 7 - Square.Rank(square);
-
-                if ((ownPawns & file) == 0)
+                int sign = side == (int)Side.White ? 1 : -1;
+                for (int file = 0; file < 8; file++)
                 {
-                    bool open = (enemyPawns & file) == 0;
-                    middlegame += sign * (open ? RookOpenFileMiddlegame : RookSemiOpenFileMiddlegame);
-                    endgame += sign * (open ? RookOpenFileEndgame : RookSemiOpenFileEndgame);
+                    if (pawnCount[side * 8 + file] > 1)
+                    {
+                        middlegame += sign * DoubledMiddlegame * (pawnCount[side * 8 + file] - 1);
+                        endgame += sign * DoubledEndgame * (pawnCount[side * 8 + file] - 1);
+                    }
                 }
-                if (relativeRank == 6)
+                if (bishops[side] >= 2)
                 {
-                    middlegame += sign * RookSeventhMiddlegame;
-                    endgame += sign * RookSeventhEndgame;
+                    middlegame += sign * BishopPairMiddlegame;
+                    endgame += sign * BishopPairEndgame;
                 }
             }
 
-            for (int file = 0; file < 8; file++)
-            {
-                int count = Bits.PopCount(ownPawns & Bitboards.Files[file]);
-                if (count > 1)
-                {
-                    middlegame += sign * DoubledMiddlegame * (count - 1);
-                    endgame += sign * DoubledEndgame * (count - 1);
-                }
-            }
-
-            if (Bits.PopCount(position.Pieces(PieceType.Bishop, color)) >= 2)
-            {
-                middlegame += sign * BishopPairMiddlegame;
-                endgame += sign * BishopPairEndgame;
-            }
         }
 
         // ===== King safety (used by Bot_v16 and newer) =====
@@ -338,29 +394,30 @@ namespace ChessEngine
 
         // Pawn shelter of a king still on its first two ranks: pawns on its own file and the two neighbouring ones.
         // A king that has walked up the board gets nothing here (the king tables already punish that).
-        private static int KingShelter(Position position, Side color, ulong ownPawns, ulong enemyPawns)
+        private static int KingShelter(Position position, Side color, Span<int> pawnCount)
         {
             int king = position.KingSquare(color);
             int kingFile = Square.File(king);
             int relativeRank = color == Side.White ? Square.Rank(king) : 7 - Square.Rank(king);
             if (relativeRank > 1) return 0;
 
+            int us = (int)color, them = 1 - us;
             int forward = color == Side.White ? 1 : -1;
             int kingRank = Square.Rank(king);
             int score = 0;
 
             for (int file = Math.Max(0, kingFile - 1); file <= Math.Min(7, kingFile + 1); file++)
             {
-                if ((ownPawns & (1UL << Square.Make(file, kingRank + forward))) != 0)
+                if (position[Square.Make(file, kingRank + forward)].Is(PieceType.Pawn, color))
                     score += ShieldPawnNear;
-                else if ((ownPawns & (1UL << Square.Make(file, kingRank + 2 * forward))) != 0)
+                else if (position[Square.Make(file, kingRank + 2 * forward)].Is(PieceType.Pawn, color))
                     score += ShieldPawnFar;
-                else if ((ownPawns & Bitboards.Files[file]) != 0)
+                else if (pawnCount[us * 8 + file] > 0)
                     score += ShieldPawnAdvanced;
                 else
                 {
                     score += ShieldFileNoOwnPawn;
-                    if ((enemyPawns & Bitboards.Files[file]) == 0) score += ShieldFileOpen;
+                    if (pawnCount[them * 8 + file] == 0) score += ShieldFileOpen;
                 }
             }
             return score;

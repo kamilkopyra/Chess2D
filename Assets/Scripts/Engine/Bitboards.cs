@@ -11,6 +11,16 @@ namespace ChessEngine
         public static readonly ulong[] Files = new ulong[8];
         public static readonly ulong[] Ranks = new ulong[8];
 
+        // AdjacentFiles[file] = the files left and right of it (not the file itself)
+        public static readonly ulong[] AdjacentFiles = new ulong[8];
+
+        // ForwardFile[(int)side][square] = squares in front of square on its file, from that side's point of view
+        public static readonly ulong[][] ForwardFile = { new ulong[64], new ulong[64] };
+
+        // PassedPawnMask[(int)side][square] = squares in front of square on its file and the neighbouring files:
+        // a pawn is passed when no enemy pawn stands there
+        public static readonly ulong[][] PassedPawnMask = { new ulong[64], new ulong[64] };
+
         public static readonly ulong[] KnightAttacks = new ulong[64];
         public static readonly ulong[] KingAttacks = new ulong[64];
 
@@ -84,6 +94,21 @@ namespace ChessEngine
             {
                 Files[i] = FileA << i;
                 Ranks[i] = Rank1 << (8 * i);
+            }
+            for (int i = 0; i < 8; i++)
+                AdjacentFiles[i] = (i > 0 ? Files[i - 1] : 0) | (i < 7 ? Files[i + 1] : 0);
+
+            for (int sq = 0; sq < 64; sq++)
+            {
+                int file = Square.File(sq), rank = Square.Rank(sq);
+                ulong above = 0, below = 0;
+                for (int r = rank + 1; r < 8; r++) above |= Ranks[r];
+                for (int r = 0; r < rank; r++) below |= Ranks[r];
+
+                ForwardFile[(int)Side.White][sq] = Files[file] & above;
+                ForwardFile[(int)Side.Black][sq] = Files[file] & below;
+                PassedPawnMask[(int)Side.White][sq] = (Files[file] | AdjacentFiles[file]) & above;
+                PassedPawnMask[(int)Side.Black][sq] = (Files[file] | AdjacentFiles[file]) & below;
             }
 
             for (int sq = 0; sq < 64; sq++)

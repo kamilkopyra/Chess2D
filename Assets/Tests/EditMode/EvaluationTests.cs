@@ -108,6 +108,54 @@ namespace ChessEngine.Tests
             Assert.AreEqual(Evaluation.EvaluateWithKingSafety(position) + Evaluation.MopUp(position), Evaluation.EvaluateFull(position));
         }
 
+        // The bitboard evaluation must give exactly the same scores as the old one (EvaluationReference)
+        // for every evaluation function, on many positions from random games (including mop-up endgames)
+        [Test]
+        public void BitboardEvaluationMatchesReference()
+        {
+            string[] fens =
+            {
+                Position.StartFen,
+                "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+                "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+                "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
+                "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10",
+                "6k1/5ppp/8/8/8/8/PPP2PPP/3R2K1 w - - 0 1",
+                "8/8/8/4k3/8/8/8/K6Q w - - 0 1",
+                "4k3/8/8/8/8/1r6/7P/4K3 b - - 0 1",
+                "2r3k1/pp3ppp/8/3p4/3P4/8/PP3PPP/2R3K1 w - - 0 1",
+            };
+
+            var random = new System.Random(2);
+            int checkedPositions = 0;
+            foreach (string fen in fens)
+            {
+                for (int game = 0; game < 15; game++)
+                {
+                    var position = Position.FromFen(fen);
+                    for (int ply = 0; ply < 150; ply++)
+                    {
+                        if (Evaluation.Evaluate(position) != EvaluationReference.Evaluate(position)
+                            || Evaluation.EvaluateWithStructure(position) != EvaluationReference.EvaluateWithStructure(position)
+                            || Evaluation.EvaluateWithKingSafety(position) != EvaluationReference.EvaluateWithKingSafety(position)
+                            || Evaluation.EvaluateFull(position) != EvaluationReference.EvaluateFull(position)
+                            || Evaluation.MopUp(position) != EvaluationReference.MopUp(position)
+                            || Evaluation.Structure(position) != EvaluationReference.Structure(position)
+                            || Evaluation.KingSafety(position) != EvaluationReference.KingSafety(position))
+                        {
+                            Assert.Fail($"different evaluation in {position.ToFen()}");
+                        }
+                        checkedPositions++;
+
+                        var moves = position.GetLegalMoves();
+                        if (moves.Count == 0) break;
+                        position.MakeMove(moves[random.Next(moves.Count)]);
+                    }
+                }
+            }
+            Assert.Greater(checkedPositions, 10000);
+        }
+
         // Flips the board vertically and swaps the colours of all pieces, the side to move and castling rights
         private static string Mirror(string fen)
         {
