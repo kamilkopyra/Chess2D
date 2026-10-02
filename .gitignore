@@ -62,3 +62,5 @@ Tools/**/obj/
 Tools/bin/
 Tools/external/
 Tools/matches/
+# Texel tuning data (positions extracted from PGN files, Stockfish labels)
+Tools/tuning/

@@ -62,6 +62,38 @@ cutechess prints `Elo difference: X +/- Y`. Against Stockfish the script also pr
 - The number is on Stockfish's `UCI_Elo` scale (engine ratings). It does not translate 1:1 to human
   ratings on lichess or chess.com.
 
+## Tuning the evaluation (Texel tuning)
+
+`Chess2D.Tune` fits the weights of `TunableEvaluation` (the evaluation of Bot_v22: material, piece-square
+tables, pawn structure, king shelter, mobility, threats, outposts) to positions from real games.
+Put the data in `Tools/tuning/` (ignored by git).
+
+```powershell
+cd Tools
+dotnet build Chess2D.Tune -c Release -o bin/tune
+
+# 1. quiet positions from PGN files: "FEN;result" (1 = White won, 0.5 = draw, 0 = Black won)
+bin/tune/Chess2D.Tune.exe extract --out tuning/positions.txt --per-game 8 --max 2000000 games.pgn more.pgn
+
+# 2. (optional) a Stockfish evaluation for every position: "FEN;result;centipawns"
+bin/tune/Chess2D.Tune.exe label --data tuning/positions.txt --out tuning/labelled.txt --stockfish external/stockfish/.../stockfish.exe --threads 8 --nodes 5000
+
+# 3. tune: writes a C# file with the weights and prints the old -> new values
+bin/tune/Chess2D.Tune.exe tune --data tuning/labelled.txt --epochs 2000 --lambda 0.5 --out tuning/TunedWeights.cs
+```
+
+| Command / option | Meaning |
+|---|---|
+| `extract --per-game` | quiet positions taken per game (positions of one game are strongly correlated) |
+| `extract --skip-plies` | opening plies skipped (default 16) |
+| `label --threads` / `--nodes` | Stockfish processes in parallel / nodes searched per position; the job can be stopped and resumed |
+| `tune --lambda` | target = lambda × game result + (1 − lambda) × Stockfish's expected score (only with labelled data) |
+| `tune --epochs` / `--rate` | gradient descent (Adam) steps and step size |
+
+A position is "quiet" when the side to move is not in check, has no capture that wins material (SEE > 0)
+and it isn't a lone-king endgame (the mop-up terms are not tuned). Copy the resulting `TunedWeights.cs`
+to `Assets/Scripts/Engine/bots/` and test the bot that uses it with an SPRT match.
+
 ## Using the engine in a GUI
 
 `Tools/bin/uci/Chess2D.Uci.exe` (built by `match.ps1`, or with
