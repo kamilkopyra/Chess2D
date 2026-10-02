@@ -183,6 +183,8 @@ namespace ChessEngine.Tests
         }
 
         // Flips the board vertically and swaps the colours of all pieces, the side to move and castling rights
+        public static string MirrorFen(string fen) => Mirror(fen);
+
         private static string Mirror(string fen)
         {
             string[] f = fen.Split(' ');

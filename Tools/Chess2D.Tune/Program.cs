@@ -18,11 +18,15 @@ namespace Chess2D.Tune
     //   Chess2D.Tune label --data positions.txt --out labelled.txt --stockfish stockfish.exe [--threads 4] [--nodes 5000]
     //       Adds a Stockfish evaluation to every position: "FEN;result;score" (see Label.cs).
     //
-    //   Chess2D.Tune tune --data positions.txt [--epochs 500] [--rate 1] [--max 2000000] [--lambda 0.5] [--out TunedWeights.cs]
+    //   Chess2D.Tune tune --data positions.txt [--epochs 500] [--rate 1] [--max 2000000] [--lambda 0.5] [--features full]
+    //                     [--out TunedWeights.cs] [--name TunedWeights] [--threads N]
     //       Finds the scaling constant K, then the weights that best predict the target
     //       (mean squared error of sigmoid(eval) against it), and writes them as a C# file.
     //       Target = lambda * game result + (1 - lambda) * Stockfish's expected score, when the data has
     //       Stockfish scores; just the game result otherwise.
+    //       --features basic|extended|full picks the feature set of TunableEvaluation (default basic; --extended is
+    //       short for --features extended); tuning starts from Default / DefaultExtended / DefaultFull.
+    //       --name is the class name in the written file.
     public static class Program
     {
         public static int Main(string[] args)
@@ -50,7 +54,12 @@ namespace Chess2D.Tune
             files = new List<string>();
             for (int i = 0; i < args.Length; i++)
             {
-                if (args[i].StartsWith("--") && i + 1 < args.Length) options[args[i].Substring(2)] = args[++i];
+                if (args[i].StartsWith("--"))
+                {
+                    // "--name value", or a flag without a value ("--extended")
+                    bool hasValue = i + 1 < args.Length && !args[i + 1].StartsWith("--");
+                    options[args[i].Substring(2)] = hasValue ? args[++i] : "true";
+                }
                 else files.Add(args[i]);
             }
             return options;
@@ -145,6 +154,13 @@ namespace Chess2D.Tune
             public short[] Coefficients;
             public byte[] Phase;
             public float[] Fixed;     // the untuned king attack, already blended (White's view)
+            public byte[] EgScale;    // the endgame part is multiplied by EgScale / 64
+            // King danger inputs (full set): for position i, entries DangerStart[i] .. DangerStart[i + 1];
+            // DangerSide[j] = 0 when White attacks (adds the penalty), 1 when Black attacks (subtracts it)
+            public int[] DangerStart;
+            public ushort[] DangerTerm;
+            public short[] DangerCoefficient;
+            public byte[] DangerSide;
             public float[] Result;
         }
 
@@ -156,13 +172,22 @@ namespace Chess2D.Tune
             double rate = Double(options, "rate", 1.0);
             int max = Int(options, "max", 2_000_000);
             double lambda = Double(options, "lambda", 0.5);
+            FeatureSet features = FeatureSet.Basic;
+            if (options.ContainsKey("extended")) features = FeatureSet.Extended;
+            if (options.TryGetValue("features", out string f)) features = (FeatureSet)Enum.Parse(typeof(FeatureSet), f, true);
+            string className = options.TryGetValue("name", out string name) ? name : "TunedWeights";
+            Workers = Int(options, "threads", Environment.ProcessorCount);
 
             var watch = Stopwatch.StartNew();
-            Dataset set = Load(data, max, lambda);
+            Dataset set = Load(data, max, lambda, features);
+            Console.WriteLine($"Feature set: {features}");
             Console.WriteLine($"Loaded {set.Count} positions, {set.Terms.Length} coefficients ({watch.Elapsed:mm\\:ss})");
 
             int n = 2 * TunableEvaluation.TermCount;
-            var weights = TunableEvaluation.Default.Select(x => (double)x).ToArray();
+            int[] startWeights = features == FeatureSet.Full ? TunableEvaluation.DefaultFull
+                               : features == FeatureSet.Extended ? TunableEvaluation.DefaultExtended
+                               : TunableEvaluation.Default;
+            var weights = startWeights.Select(x => (double)x).ToArray();
 
             double k = FitK(set, weights);
             double startError = Error(set, weights, k);
@@ -190,8 +215,8 @@ namespace Chess2D.Tune
             int[] tuned = weights.Select(x => (int)Math.Round(x)).ToArray();
             double endError = Error(set, tuned.Select(x => (double)x).ToArray(), k);
             Console.WriteLine($"Error: {startError:F6} -> {endError:F6} (rounded weights)");
-            WriteWeights(output, tuned, k, set.Count, startError, endError);
-            PrintChanges(tuned);
+            WriteWeights(output, className, features, tuned, k, set.Count, startError, endError);
+            PrintChanges(startWeights, tuned, features);
             Console.WriteLine($"Weights written to {output}");
             return 0;
         }
@@ -199,13 +224,21 @@ namespace Chess2D.Tune
         // Stockfish's centipawns -> expected score, on the usual Elo-like scale
         static double ExpectedScore(double centipawns) => 1.0 / (1.0 + Math.Pow(10, -centipawns / 400));
 
-        static Dataset Load(string path, int max, double lambda)
+        // Threads used for the error and the gradient (--threads; all cores by default)
+        static int Workers = Environment.ProcessorCount;
+
+        static Dataset Load(string path, int max, double lambda, FeatureSet features)
         {
             var start = new List<int> { 0 };
             var terms = new List<ushort>();
             var coefficients = new List<short>();
             var phase = new List<byte>();
             var fixedScores = new List<float>();
+            var egScales = new List<byte>();
+            var dangerStart = new List<int> { 0 };
+            var dangerTerm = new List<ushort>();
+            var dangerCoefficient = new List<short>();
+            var dangerSide = new List<byte>();
             var results = new List<float>();
             var trace = new TunableEvaluation.Trace();
 
@@ -223,7 +256,7 @@ namespace Chess2D.Tune
                     result = lambda * result + (1 - lambda) * ExpectedScore(centipawns);
                 }
 
-                TunableEvaluation.Collect(position, trace);
+                TunableEvaluation.Collect(position, trace, features);
                 for (int i = 0; i < trace.Terms.Count; i++)
                 {
                     terms.Add((ushort)trace.Terms[i]);
@@ -231,6 +264,17 @@ namespace Chess2D.Tune
                 }
                 start.Add(terms.Count);
                 phase.Add((byte)trace.Phase);
+                egScales.Add((byte)trace.EgScale);
+                for (int side = 0; side < 2; side++)
+                {
+                    for (int i = 0; i < trace.DangerTerms[side].Count; i++)
+                    {
+                        dangerTerm.Add((ushort)trace.DangerTerms[side][i]);
+                        dangerCoefficient.Add((short)trace.DangerCoefficients[side][i]);
+                        dangerSide.Add((byte)side);
+                    }
+                }
+                dangerStart.Add(dangerTerm.Count);
                 fixedScores.Add(trace.KingAttack * trace.Phase / (float)TunableEvaluation.MaxPhase + trace.MopUp);
                 results.Add((float)result);
             }
@@ -243,14 +287,40 @@ namespace Chess2D.Tune
                 Coefficients = coefficients.ToArray(),
                 Phase = phase.ToArray(),
                 Fixed = fixedScores.ToArray(),
+                EgScale = egScales.ToArray(),
+                DangerStart = dangerStart.ToArray(),
+                DangerTerm = dangerTerm.ToArray(),
+                DangerCoefficient = dangerCoefficient.ToArray(),
+                DangerSide = dangerSide.ToArray(),
                 Result = results.ToArray(),
             };
         }
+
+        // King danger of both attacking sides for position i (real-valued weights)
+        static void Dangers(Dataset set, int i, double[] w, out double white, out double black)
+        {
+            white = black = 0;
+            for (int j = set.DangerStart[i]; j < set.DangerStart[i + 1]; j++)
+            {
+                double value = set.DangerCoefficient[j] * w[2 * set.DangerTerm[j]];
+                if (set.DangerSide[j] == 0) white += value; else black += value;
+            }
+        }
+
+        // The king danger penalty (as TunableEvaluation.DangerPenalty, but real-valued) and its derivative
+        static double Penalty(double danger) => danger <= 0 ? 0 : Math.Min(TunableEvaluation.DangerCap, danger * danger / 1024);
+        static double PenaltySlope(double danger) =>
+            danger <= 0 || danger * danger / 1024 >= TunableEvaluation.DangerCap ? 0 : 2 * danger / 1024;
 
         // Evaluation (White's view) of position i with real-valued weights
         static double Eval(Dataset set, int i, double[] w)
         {
             double mg = 0, eg = 0;
+            if (set.DangerStart[i + 1] > set.DangerStart[i])
+            {
+                Dangers(set, i, w, out double white, out double black);
+                mg += Penalty(white) - Penalty(black);
+            }
             for (int j = set.Start[i]; j < set.Start[i + 1]; j++)
             {
                 int term = set.Terms[j];
@@ -258,6 +328,7 @@ namespace Chess2D.Tune
                 eg += set.Coefficients[j] * w[2 * term + 1];
             }
             int phase = set.Phase[i];
+            eg *= set.EgScale[i] / (double)TunableEvaluation.FullScale;
             return (mg * phase + eg * (TunableEvaluation.MaxPhase - phase)) / TunableEvaluation.MaxPhase + set.Fixed[i];
         }
 
@@ -268,9 +339,9 @@ namespace Chess2D.Tune
         {
             double total = 0;
             object gate = new object();
-            Parallel.For(0, Environment.ProcessorCount, () => 0.0, (part, _, sum) =>
+            Parallel.For(0, Workers, () => 0.0, (part, _, sum) =>
             {
-                for (int i = part; i < set.Count; i += Environment.ProcessorCount)
+                for (int i = part; i < set.Count; i += Workers)
                 {
                     double diff = set.Result[i] - Sigmoid(Eval(set, i, w), k);
                     sum += diff * diff;
@@ -287,20 +358,33 @@ namespace Chess2D.Tune
             var total = new double[n];
             object gate = new object();
             double scale = Math.Log(10) * k / 400;
-            Parallel.For(0, Environment.ProcessorCount, () => new double[n], (part, _, g) =>
+            Parallel.For(0, Workers, () => new double[n], (part, _, g) =>
             {
-                for (int i = part; i < set.Count; i += Environment.ProcessorCount)
+                for (int i = part; i < set.Count; i += Workers)
                 {
                     double s = Sigmoid(Eval(set, i, w), k);
                     // d(error)/d(eval) for this position
                     double dEval = -2 * (set.Result[i] - s) * s * (1 - s) * scale;
                     double mgShare = set.Phase[i] / (double)TunableEvaluation.MaxPhase;
+                    double egShare = (1 - mgShare) * set.EgScale[i] / TunableEvaluation.FullScale;
                     for (int j = set.Start[i]; j < set.Start[i + 1]; j++)
                     {
                         int term = set.Terms[j];
                         double c = dEval * set.Coefficients[j];
                         g[2 * term] += c * mgShare;
-                        g[2 * term + 1] += c * (1 - mgShare);
+                        g[2 * term + 1] += c * egShare;
+                    }
+
+                    // King danger: d(penalty)/d(weight) = penalty'(danger) * input, in the middlegame part
+                    if (set.DangerStart[i + 1] > set.DangerStart[i])
+                    {
+                        Dangers(set, i, w, out double white, out double black);
+                        double slopeWhite = PenaltySlope(white), slopeBlack = PenaltySlope(black);
+                        for (int j = set.DangerStart[i]; j < set.DangerStart[i + 1]; j++)
+                        {
+                            double slope = set.DangerSide[j] == 0 ? slopeWhite : -slopeBlack;
+                            g[2 * set.DangerTerm[j]] += dEval * mgShare * slope * set.DangerCoefficient[j];
+                        }
                     }
                 }
                 return g;
@@ -324,15 +408,17 @@ namespace Chess2D.Tune
             return (a + b) / 2;
         }
 
-        static void WriteWeights(string path, int[] w, double k, int positions, double startError, double endError)
+        static void WriteWeights(string path, string className, FeatureSet features, int[] w, double k, int positions,
+                                 double startError, double endError)
         {
             var sb = new StringBuilder();
             sb.AppendLine("namespace ChessEngine");
             sb.AppendLine("{");
             sb.AppendLine("    // Evaluation weights found by Texel tuning (Tools/Chess2D.Tune), in the layout of TunableEvaluation:");
             sb.AppendLine("    // Weights[2 * term] for the middlegame, Weights[2 * term + 1] for the endgame.");
+            sb.AppendLine($"    // Feature set: {features} (TunableEvaluation.Evaluate(position, weights, FeatureSet.{features})).");
             sb.AppendLine(FormattableString.Invariant($"    // {positions} positions, K = {k:F4}, error {startError:F6} -> {endError:F6}"));
-            sb.AppendLine("    public static class TunedWeights");
+            sb.AppendLine($"    public static class {className}");
             sb.AppendLine("    {");
             sb.AppendLine("        public static readonly int[] Weights =");
             sb.AppendLine("        {");
@@ -346,16 +432,18 @@ namespace Chess2D.Tune
             File.WriteAllText(path, sb.ToString().Replace("\r\n", "\n"), new UTF8Encoding(false));
         }
 
-        // The terms outside the piece-square tables, old -> new
-        static void PrintChanges(int[] tuned)
+        // The single-value terms of the tuned feature set (no tables), old -> new
+        static void PrintChanges(int[] old, int[] tuned, FeatureSet features)
         {
             Console.WriteLine();
-            Console.WriteLine($"{"term",-22} {"middlegame",18} {"endgame",18}");
+            Console.WriteLine($"{"term",-30} {"middlegame",18} {"endgame",18}");
             for (int term = 0; term < TunableEvaluation.TermCount; term++)
             {
-                if (term >= TunableEvaluation.PieceSquare && term < TunableEvaluation.Passed) continue;
-                int[] old = TunableEvaluation.Default;
-                Console.WriteLine($"{TunableEvaluation.TermName(term),-22} {old[2 * term],7} -> {tuned[2 * term],-7} {old[2 * term + 1],7} -> {tuned[2 * term + 1],-7}");
+                if (!TunableEvaluation.IsScalarTerm(term)) continue;
+                if (features == FeatureSet.Basic && term >= TunableEvaluation.BasicTermCount) continue;
+                if (features == FeatureSet.Extended && term >= TunableEvaluation.ThreatByMinor) continue;
+                if (features != FeatureSet.Basic && term >= TunableEvaluation.Mobility && term < TunableEvaluation.PawnThreat) continue;   // replaced by the tables
+                Console.WriteLine($"{TunableEvaluation.TermName(term),-30} {old[2 * term],7} -> {tuned[2 * term],-7} {old[2 * term + 1],7} -> {tuned[2 * term + 1],-7}");
             }
         }
     }
