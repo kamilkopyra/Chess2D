@@ -14,6 +14,12 @@ namespace ChessEngine
         private readonly Piece[] board = new Piece[64];
         private readonly int[] kingSquare = new int[2];
 
+        // Bitboards kept in sync with `board` (bit index = square index): one per piece type
+        // (indexed by PieceType, index 0 unused), one per side, and all occupied squares.
+        private readonly ulong[] typeBits = new ulong[7];
+        private readonly ulong[] sideBits = new ulong[2];
+        private ulong occupied;
+
         public Side SideToMove { get; private set; }
         public CastlingRights Castling { get; private set; }
         public int EnPassantSquare { get; private set; } = Square.None;
@@ -42,6 +48,11 @@ namespace ChessEngine
         public int KingSquare(Side side) => kingSquare[(int)side];
         public bool InCheck => IsSquareAttacked(kingSquare[(int)SideToMove], SideToMove.Opponent());
 
+        public ulong Occupied => occupied;
+        public ulong Pieces(Side side) => sideBits[(int)side];
+        public ulong Pieces(PieceType type) => typeBits[(int)type];
+        public ulong Pieces(PieceType type, Side side) => typeBits[(int)type] & sideBits[(int)side];
+
         // Liczba ruchów wykonanych od wczytania pozycji
         public int MovesPlayed => history.Count;
 
@@ -68,6 +79,9 @@ namespace ChessEngine
             };
             Array.Copy(board, copy.board, 64);
             Array.Copy(kingSquare, copy.kingSquare, 2);
+            Array.Copy(typeBits, copy.typeBits, typeBits.Length);
+            Array.Copy(sideBits, copy.sideBits, 2);
+            copy.occupied = occupied;
             copy.history.AddRange(history);
             return copy;
         }
@@ -138,25 +152,25 @@ namespace ChessEngine
 
             // Tu nie liczymy hasha na bieżąco, bo przywracamy go z historii
             Piece moved = move.IsPromotion ? new Piece(PieceType.Pawn, us) : board[move.To];
-            board[move.To] = Piece.None;
-            board[move.From] = moved;
+            SetSquare(move.To, Piece.None);
+            SetSquare(move.From, moved);
             if (moved.Type == PieceType.King) kingSquare[(int)us] = move.From;
 
             if ((move.Flags & MoveFlags.CastleKingside) != 0)
             {
-                board[move.From + 1] = Piece.None;
-                board[move.From + 3] = new Piece(PieceType.Rook, us);
+                SetSquare(move.From + 1, Piece.None);
+                SetSquare(move.From + 3, new Piece(PieceType.Rook, us));
             }
             else if ((move.Flags & MoveFlags.CastleQueenside) != 0)
             {
-                board[move.From - 1] = Piece.None;
-                board[move.From - 4] = new Piece(PieceType.Rook, us);
+                SetSquare(move.From - 1, Piece.None);
+                SetSquare(move.From - 4, new Piece(PieceType.Rook, us));
             }
 
             if (!undo.Captured.IsEmpty)
             {
                 int captureSquare = move.IsEnPassant ? move.To + (us == Side.White ? -8 : 8) : move.To;
-                board[captureSquare] = undo.Captured;
+                SetSquare(captureSquare, undo.Captured);
             }
 
             Castling = undo.Castling;
@@ -201,14 +215,34 @@ namespace ChessEngine
 
         private void PutPiece(int square, Piece piece)
         {
-            board[square] = piece;
+            SetSquare(square, piece);
             Hash ^= Zobrist.PieceSquare[piece.Index, square];
         }
 
         private void RemovePiece(int square)
         {
             Hash ^= Zobrist.PieceSquare[board[square].Index, square];
-            board[square] = Piece.None;
+            SetSquare(square, Piece.None);
+        }
+
+        // Puts a piece (or Piece.None) on a square and updates the bitboards; doesn't touch the hash
+        private void SetSquare(int square, Piece piece)
+        {
+            ulong bit = 1UL << square;
+            Piece old = board[square];
+            if (!old.IsEmpty)
+            {
+                typeBits[(int)old.Type] ^= bit;
+                sideBits[(int)old.Color] ^= bit;
+                occupied ^= bit;
+            }
+            if (!piece.IsEmpty)
+            {
+                typeBits[(int)piece.Type] ^= bit;
+                sideBits[(int)piece.Color] ^= bit;
+                occupied ^= bit;
+            }
+            board[square] = piece;
         }
 
         // Pole en passant wchodzi do hasha tylko wtedy, gdy strona na ruchu faktycznie może bić w przelocie.
@@ -218,9 +252,8 @@ namespace ChessEngine
             if (EnPassantSquare == Square.None) return 0;
 
             Side us = SideToMove;
-            foreach (int sq in Attacks.Pawn[(int)us.Opponent()][EnPassantSquare])
-                if (board[sq].Is(PieceType.Pawn, us))
-                    return Zobrist.EnPassantFile[Square.File(EnPassantSquare)];
+            if ((Bitboards.PawnAttacks[(int)us.Opponent()][EnPassantSquare] & typeBits[(int)PieceType.Pawn] & sideBits[(int)us]) != 0)
+                return Zobrist.EnPassantFile[Square.File(EnPassantSquare)];
             return 0;
         }
 
@@ -238,34 +271,63 @@ namespace ChessEngine
         // Do testów: czy hash liczony przyrostowo zgadza się z liczonym od zera
         public bool HashIsConsistent() => Hash == ComputeHash();
 
-        // ===== Ataki =====
-
-        public bool IsSquareAttacked(int square, Side by)
+        // For tests: do the bitboards describe exactly the pieces on the board (and the king squares)?
+        public bool BitboardsAreConsistent()
         {
-            // Pion strony "by" atakuje square, jeśli stoi na polu, które atakowałby pion przeciwnika z square
-            foreach (int sq in Attacks.Pawn[(int)by.Opponent()][square])
-                if (board[sq].Is(PieceType.Pawn, by)) return true;
-
-            foreach (int sq in Attacks.Knight[square])
-                if (board[sq].Is(PieceType.Knight, by)) return true;
-
-            foreach (int sq in Attacks.King[square])
-                if (board[sq].Is(PieceType.King, by)) return true;
-
-            int[][] rays = Attacks.Rays[square];
-            for (int d = 0; d < 8; d++)
+            var types = new ulong[7];
+            var sides = new ulong[2];
+            for (int sq = 0; sq < 64; sq++)
             {
-                PieceType slider = d < Attacks.FirstDiagonal ? PieceType.Rook : PieceType.Bishop;
-                foreach (int sq in rays[d])
-                {
-                    Piece p = board[sq];
-                    if (p.IsEmpty) continue;
-                    if (p.Color == by && (p.Type == slider || p.Type == PieceType.Queen)) return true;
-                    break;
-                }
+                Piece p = board[sq];
+                if (p.IsEmpty) continue;
+                types[(int)p.Type] |= 1UL << sq;
+                sides[(int)p.Color] |= 1UL << sq;
             }
 
-            return false;
+            for (int t = 0; t < 7; t++)
+                if (types[t] != typeBits[t]) return false;
+            if (sides[0] != sideBits[0] || sides[1] != sideBits[1]) return false;
+            if (occupied != (sides[0] | sides[1])) return false;
+
+            for (int s = 0; s < 2; s++)
+                if ((typeBits[(int)PieceType.King] & sideBits[s]) != 1UL << kingSquare[s]) return false;
+            return true;
+        }
+
+        // ===== Ataki =====
+
+        public bool IsSquareAttacked(int square, Side by) => IsSquareAttacked(square, by, occupied);
+
+        // The same with a different set of occupied squares (e.g. with our king lifted off the board)
+        private bool IsSquareAttacked(int square, Side by, ulong occupiedSquares)
+        {
+            ulong attackers = sideBits[(int)by];
+
+            // Pion strony "by" atakuje square, jeśli stoi na polu, które atakowałby pion przeciwnika z square
+            if ((Bitboards.PawnAttacks[(int)by.Opponent()][square] & typeBits[(int)PieceType.Pawn] & attackers) != 0) return true;
+            if ((Bitboards.KnightAttacks[square] & typeBits[(int)PieceType.Knight] & attackers) != 0) return true;
+            if ((Bitboards.KingAttacks[square] & typeBits[(int)PieceType.King] & attackers) != 0) return true;
+
+            ulong queens = typeBits[(int)PieceType.Queen];
+            ulong rooks = (typeBits[(int)PieceType.Rook] | queens) & attackers;
+            if (rooks != 0 && (Bitboards.RookAttacks(square, occupiedSquares) & rooks) != 0) return true;
+            ulong bishops = (typeBits[(int)PieceType.Bishop] | queens) & attackers;
+            return bishops != 0 && (Bitboards.BishopAttacks(square, occupiedSquares) & bishops) != 0;
+        }
+
+        // Bitboard of all pieces of both sides that attack `square`, with sliders blocked by `occupiedSquares`.
+        // Pieces are taken from the current position; pass a smaller `occupiedSquares` to see x-ray attackers
+        // behind removed pieces (and mask the removed pieces out of the result yourself), e.g. for SEE.
+        public ulong AttackersTo(int square, ulong occupiedSquares)
+        {
+            ulong queens = typeBits[(int)PieceType.Queen];
+            ulong pawns = typeBits[(int)PieceType.Pawn];
+            return (Bitboards.PawnAttacks[(int)Side.Black][square] & pawns & sideBits[(int)Side.White])
+                 | (Bitboards.PawnAttacks[(int)Side.White][square] & pawns & sideBits[(int)Side.Black])
+                 | (Bitboards.KnightAttacks[square] & typeBits[(int)PieceType.Knight])
+                 | (Bitboards.KingAttacks[square] & typeBits[(int)PieceType.King])
+                 | (Bitboards.RookAttacks(square, occupiedSquares) & (typeBits[(int)PieceType.Rook] | queens))
+                 | (Bitboards.BishopAttacks(square, occupiedSquares) & (typeBits[(int)PieceType.Bishop] | queens));
         }
 
         // ===== Generowanie ruchów =====
@@ -277,6 +339,8 @@ namespace ChessEngine
             return moves;
         }
 
+        // Reference implementation: every pseudo-legal move is made and the king is checked.
+        // Slower than GenerateLegalMovesFast, kept as an independent check for tests and Perft.Count.
         public void GenerateLegalMoves(List<Move> result)
         {
             result.Clear();
@@ -292,115 +356,21 @@ namespace ChessEngine
             }
         }
 
-        // Same result as GenerateLegalMoves, but faster (used by Bot_v17 and newer): instead of making every move
-        // and checking the king, it finds the pinned pieces once and checks most moves without making them.
-        // Moves are only made and unmade when in check and for en passant (both rare).
-        // `pseudo` is a scratch list the caller can reuse, so nothing is allocated.
+        // Same moves in the same order as GenerateLegalMoves, but faster (used by Bot_v17 and newer):
+        // checks and pins are found once on bitboards and only legal moves are generated.
+        // `pseudo` is no longer needed (kept so the signature doesn't change); it is only cleared.
         public void GenerateLegalMovesFast(List<Move> result, List<Move> pseudo)
         {
             result.Clear();
             pseudo.Clear();
-            GeneratePseudoLegalMoves(pseudo);
-
-            Side us = SideToMove, them = us.Opponent();
-            int king = kingSquare[(int)us];
-
-            if (IsSquareAttacked(king, them))
-            {
-                foreach (Move move in pseudo)
-                {
-                    MakeMove(move);
-                    if (!IsSquareAttacked(kingSquare[(int)us], them)) result.Add(move);
-                    UnmakeMove();
-                }
-                return;
-            }
-
-            // Pinned pieces: our piece with an enemy slider behind it on a line from our king.
-            // Up to 8 of them (one per direction); pinDirection is the direction from the king.
-            Span<int> pinnedSquare = stackalloc int[8];
-            Span<int> pinDirection = stackalloc int[8];
-            int pinnedCount = 0;
-            int[][] kingRays = Attacks.Rays[king];
-            for (int d = 0; d < 8; d++)
-            {
-                PieceType slider = d < Attacks.FirstDiagonal ? PieceType.Rook : PieceType.Bishop;
-                int candidate = -1;
-                foreach (int sq in kingRays[d])
-                {
-                    Piece p = board[sq];
-                    if (p.IsEmpty) continue;
-                    if (p.Color == us)
-                    {
-                        if (candidate >= 0) break;   // two of our pieces in a row: nothing is pinned
-                        candidate = sq;
-                        continue;
-                    }
-                    if (candidate >= 0 && (p.Type == slider || p.Type == PieceType.Queen))
-                    {
-                        pinnedSquare[pinnedCount] = candidate;
-                        pinDirection[pinnedCount] = d;
-                        pinnedCount++;
-                    }
-                    break;
-                }
-            }
-
-            foreach (Move move in pseudo)
-            {
-                if (move.From == king)
-                {
-                    // Castling is already checked by the generator. Other king moves: the target must not be
-                    // attacked - with the king lifted off the board, so it doesn't hide the squares behind it.
-                    if ((move.Flags & (MoveFlags.CastleKingside | MoveFlags.CastleQueenside)) != 0)
-                    {
-                        result.Add(move);
-                        continue;
-                    }
-                    Piece kingPiece = board[king];
-                    board[king] = Piece.None;
-                    bool attacked = IsSquareAttacked(move.To, them);
-                    board[king] = kingPiece;
-                    if (!attacked) result.Add(move);
-                    continue;
-                }
-
-                if (move.IsEnPassant)
-                {
-                    // Removes two pawns from one rank at once, which can expose the king sideways: just try it
-                    MakeMove(move);
-                    if (!IsSquareAttacked(kingSquare[(int)us], them)) result.Add(move);
-                    UnmakeMove();
-                    continue;
-                }
-
-                // A pinned piece may only move along the pin line (towards the king or onto the pinning piece)
-                int pin = -1;
-                for (int i = 0; i < pinnedCount; i++)
-                {
-                    if (pinnedSquare[i] == move.From) pin = pinDirection[i];
-                }
-                if (pin < 0 || Array.IndexOf(kingRays[pin], move.To) >= 0)
-                {
-                    result.Add(move);
-                }
-            }
+            GenerateMoves(result, false, true);
         }
 
         public bool HasAnyLegalMove()
         {
-            var pseudo = new List<Move>(64);
-            GeneratePseudoLegalMoves(pseudo);
-
-            Side us = SideToMove;
-            foreach (Move move in pseudo)
-            {
-                MakeMove(move);
-                bool legal = !IsSquareAttacked(kingSquare[(int)us], us.Opponent());
-                UnmakeMove();
-                if (legal) return true;
-            }
-            return false;
+            var moves = new List<Move>(64);
+            GenerateMoves(moves, false, true);
+            return moves.Count > 0;
         }
 
         // Legalny ruch z pola from na pole to (dla kliknięć). Przy promocji trzeba podać figurę.
@@ -419,48 +389,118 @@ namespace ChessEngine
         }
 
         // Ruchy "prawie legalne": zgodne z zasadami ruchu figur, ale mogą zostawić własnego króla w szachu
-        public void GeneratePseudoLegalMoves(List<Move> moves) => GeneratePseudoLegal(moves, false);
+        public void GeneratePseudoLegalMoves(List<Move> moves) => GenerateMoves(moves, false, false);
 
         // Only captures (including en passant) and promotions, pseudo-legal - for quiescence search (Bot_v17 and newer).
         // Same moves as GeneratePseudoLegalMoves filtered to IsCapture || IsPromotion, without generating the rest.
-        public void GeneratePseudoLegalCaptures(List<Move> moves) => GeneratePseudoLegal(moves, true);
+        public void GeneratePseudoLegalCaptures(List<Move> moves) => GenerateMoves(moves, true, false);
 
-        private void GeneratePseudoLegal(List<Move> moves, bool capturesOnly)
+        // One generator for all the variants. The moves come in a fixed order (the same as in the old mailbox
+        // generator, which the bots' move ordering relies on for ties): pieces by square a1..h8; for each piece
+        // its targets in the order of Attacks.Knight / Attacks.King / Attacks.Rays (direction by direction,
+        // nearest square first); castling last.
+        // legalOnly: skip moves that leave our king in check (pins and checks found once, on bitboards).
+        private void GenerateMoves(List<Move> moves, bool capturesOnly, bool legalOnly)
         {
             Side us = SideToMove, them = us.Opponent();
+            ulong own = sideBits[(int)us], enemy = sideBits[(int)them];
+            int king = kingSquare[(int)us];
 
-            for (int sq = 0; sq < 64; sq++)
+            // Squares the non-king pieces may move to: with one checker capture it or block, with two only
+            // the king can move
+            ulong checkMask = ~0UL;
+            ulong pinned = 0;
+            bool inCheck = false;
+            if (legalOnly)
             {
-                Piece p = board[sq];
-                if (p.IsEmpty || p.Color != us) continue;
+                ulong checkers = AttackersTo(king, occupied) & enemy;
+                if (checkers != 0)
+                {
+                    inCheck = true;
+                    checkMask = (checkers & (checkers - 1)) != 0
+                        ? 0
+                        : checkers | Bitboards.Between[king * 64 + Bits.LowestSquare(checkers)];
+                }
+                pinned = PinnedPieces(king, own, enemy);
+            }
 
-                switch (p.Type)
+            // Captures only: enemy pieces; otherwise anything but our own pieces
+            ulong targetMask = capturesOnly ? enemy : ~own;
+
+            ulong pieces = own;
+            while (pieces != 0)
+            {
+                int sq = Bits.PopLowest(ref pieces);
+
+                // A pinned piece may only move along the line through our king and itself
+                ulong allowed = checkMask;
+                if ((pinned & (1UL << sq)) != 0) allowed &= Bitboards.Line[king * 64 + sq];
+
+                switch (board[sq].Type)
                 {
                     case PieceType.Pawn:
-                        GeneratePawnMoves(sq, us, them, moves, capturesOnly);
+                        GeneratePawnMoves(sq, us, enemy, allowed, moves, capturesOnly, legalOnly);
                         break;
                     case PieceType.Knight:
-                        GenerateStepMoves(sq, Attacks.Knight[sq], them, moves, capturesOnly);
-                        break;
-                    case PieceType.King:
-                        GenerateStepMoves(sq, Attacks.King[sq], them, moves, capturesOnly);
+                        AddStepMoves(sq, Attacks.Knight[sq], Bitboards.KnightAttacks[sq] & targetMask & allowed, enemy, moves);
                         break;
                     case PieceType.Bishop:
-                        GenerateSlidingMoves(sq, Attacks.FirstDiagonal, 8, them, moves, capturesOnly);
+                        AddSlidingMoves(sq, Bitboards.BishopAttacks(sq, occupied) & targetMask & allowed,
+                                        Attacks.FirstDiagonal, 8, enemy, moves);
                         break;
                     case PieceType.Rook:
-                        GenerateSlidingMoves(sq, Attacks.FirstOrthogonal, 4, them, moves, capturesOnly);
+                        AddSlidingMoves(sq, Bitboards.RookAttacks(sq, occupied) & targetMask & allowed,
+                                        Attacks.FirstOrthogonal, 4, enemy, moves);
                         break;
                     case PieceType.Queen:
-                        GenerateSlidingMoves(sq, 0, 8, them, moves, capturesOnly);
+                        AddSlidingMoves(sq, Bitboards.QueenAttacks(sq, occupied) & targetMask & allowed,
+                                        0, 8, enemy, moves);
+                        break;
+                    case PieceType.King:
+                        ulong targets = Bitboards.KingAttacks[sq] & targetMask;
+                        if (legalOnly)
+                        {
+                            // The target must not be attacked - with the king lifted off the board,
+                            // so it doesn't hide the squares behind it
+                            ulong withoutKing = occupied ^ (1UL << sq);
+                            ulong safe = 0;
+                            ulong t = targets;
+                            while (t != 0)
+                            {
+                                int to = Bits.PopLowest(ref t);
+                                if (!IsSquareAttacked(to, them, withoutKing)) safe |= 1UL << to;
+                            }
+                            targets = safe;
+                        }
+                        AddStepMoves(sq, Attacks.King[sq], targets, enemy, moves);
                         break;
                 }
             }
 
-            if (!capturesOnly) GenerateCastlingMoves(us, them, moves);
+            // Castling out of check is not allowed (GenerateCastlingMoves checks that too)
+            if (!capturesOnly && !inCheck) GenerateCastlingMoves(us, them, moves);
         }
 
-        private void GeneratePawnMoves(int sq, Side us, Side them, List<Move> moves, bool capturesOnly)
+        // Our pieces that are the only piece between our king and an enemy slider on the same line
+        private ulong PinnedPieces(int king, ulong own, ulong enemy)
+        {
+            ulong queens = typeBits[(int)PieceType.Queen];
+            // Enemy sliders that would attack the king if none of our pieces were in the way
+            ulong snipers = ((Bitboards.RookAttacks(king, enemy) & (typeBits[(int)PieceType.Rook] | queens))
+                           | (Bitboards.BishopAttacks(king, enemy) & (typeBits[(int)PieceType.Bishop] | queens))) & enemy;
+
+            ulong pinned = 0;
+            while (snipers != 0)
+            {
+                int sniper = Bits.PopLowest(ref snipers);
+                ulong between = Bitboards.Between[king * 64 + sniper] & occupied;
+                if (between != 0 && (between & (between - 1)) == 0) pinned |= between & own;
+            }
+            return pinned;
+        }
+
+        // allowed: squares the pawn may move to (check and pin restrictions); en passant is checked separately
+        private void GeneratePawnMoves(int sq, Side us, ulong enemy, ulong allowed, List<Move> moves, bool capturesOnly, bool legalOnly)
         {
             int forward = us == Side.White ? 8 : -8;
             int startRank = us == Side.White ? 1 : 6;
@@ -470,21 +510,40 @@ namespace ChessEngine
             // With capturesOnly a push is only generated when it promotes
             if (board[one].IsEmpty && (!capturesOnly || Square.Rank(one) == lastRank))
             {
-                AddPawnMove(sq, one, MoveFlags.None, us, moves);
+                if ((allowed & (1UL << one)) != 0) AddPawnMove(sq, one, MoveFlags.None, us, moves);
 
                 int two = one + forward;
-                if (!capturesOnly && Square.Rank(sq) == startRank && board[two].IsEmpty)
+                if (!capturesOnly && Square.Rank(sq) == startRank && board[two].IsEmpty && (allowed & (1UL << two)) != 0)
                     moves.Add(new Move(sq, two, MoveFlags.DoublePawnPush));
             }
 
-            foreach (int target in Attacks.Pawn[(int)us][sq])
+            // Both capture targets in ascending square order (as in Attacks.Pawn)
+            ulong targets = Bitboards.PawnAttacks[(int)us][sq];
+            while (targets != 0)
             {
-                Piece victim = board[target];
-                if (!victim.IsEmpty && victim.Color == them)
-                    AddPawnMove(sq, target, MoveFlags.Capture, us, moves);
-                else if (target == EnPassantSquare)
+                int target = Bits.PopLowest(ref targets);
+                if ((enemy & (1UL << target)) != 0)
+                {
+                    if ((allowed & (1UL << target)) != 0) AddPawnMove(sq, target, MoveFlags.Capture, us, moves);
+                }
+                else if (target == EnPassantSquare && (!legalOnly || EnPassantIsLegal(sq, target)))
+                {
                     moves.Add(new Move(sq, target, MoveFlags.Capture | MoveFlags.EnPassant));
+                }
             }
+        }
+
+        // En passant removes two pawns from one rank at once (which can expose the king sideways) and can
+        // capture a checking pawn without landing on its square, so it is checked exactly: is our king
+        // attacked after the capture?
+        private bool EnPassantIsLegal(int from, int to)
+        {
+            Side us = SideToMove;
+            int captured = to + (us == Side.White ? -8 : 8);
+            ulong capturedBit = 1UL << captured;
+            ulong occupiedAfter = occupied ^ (1UL << from) ^ (1UL << to) ^ capturedBit;
+            ulong enemyAfter = sideBits[(int)us.Opponent()] & ~capturedBit;
+            return (AttackersTo(kingSquare[(int)us], occupiedAfter) & enemyAfter) == 0;
         }
 
         private static void AddPawnMove(int from, int to, MoveFlags flags, Side us, List<Move> moves)
@@ -503,34 +562,40 @@ namespace ChessEngine
             }
         }
 
-        private void GenerateStepMoves(int sq, int[] targets, Side them, List<Move> moves, bool capturesOnly)
+        // Knight and king: adds the moves to `targets`, in the order of the `order` list
+        private static void AddStepMoves(int sq, int[] order, ulong targets, ulong enemy, List<Move> moves)
         {
-            foreach (int target in targets)
+            for (int i = 0; i < order.Length && targets != 0; i++)
             {
-                Piece p = board[target];
-                if (p.IsEmpty)
-                {
-                    if (!capturesOnly) moves.Add(new Move(sq, target));
-                }
-                else if (p.Color == them) moves.Add(new Move(sq, target, MoveFlags.Capture));
+                ulong bit = 1UL << order[i];
+                if ((targets & bit) == 0) continue;
+                targets ^= bit;
+                moves.Add(new Move(sq, order[i], (enemy & bit) != 0 ? MoveFlags.Capture : MoveFlags.None));
             }
         }
 
-        private void GenerateSlidingMoves(int sq, int firstDirection, int endDirection, Side them, List<Move> moves, bool capturesOnly)
+        // Sliders: adds the moves to `targets` direction by direction, nearest square first.
+        // Even directions (see Attacks) go towards higher squares, odd ones towards lower squares.
+        private static void AddSlidingMoves(int sq, ulong targets, int firstDirection, int endDirection, ulong enemy, List<Move> moves)
         {
-            int[][] rays = Attacks.Rays[sq];
-            for (int d = firstDirection; d < endDirection; d++)
+            for (int d = firstDirection; d < endDirection && targets != 0; d++)
             {
-                foreach (int target in rays[d])
+                ulong ray = targets & Bitboards.RayMask[sq * 8 + d];
+                targets ^= ray;
+                while (ray != 0)
                 {
-                    Piece p = board[target];
-                    if (p.IsEmpty)
+                    int to;
+                    if ((d & 1) == 0)
                     {
-                        if (!capturesOnly) moves.Add(new Move(sq, target));
-                        continue;
+                        to = Bits.LowestSquare(ray);
                     }
-                    if (p.Color == them) moves.Add(new Move(sq, target, MoveFlags.Capture));
-                    break;
+                    else
+                    {
+                        to = Bits.HighestSquare(ray);
+                    }
+                    ulong bit = 1UL << to;
+                    ray ^= bit;
+                    moves.Add(new Move(sq, to, (enemy & bit) != 0 ? MoveFlags.Capture : MoveFlags.None));
                 }
             }
         }
@@ -665,7 +730,7 @@ namespace ChessEngine
 
                     Piece piece = Piece.FromFenChar(c);
                     int sq = Square.Make(file, rank);
-                    pos.board[sq] = piece;
+                    pos.SetSquare(sq, piece);
                     if (piece.Type == PieceType.King)
                     {
                         pos.kingSquare[(int)piece.Color] = sq;
