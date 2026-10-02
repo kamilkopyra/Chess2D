@@ -1,9 +1,10 @@
 <#
 .SYNOPSIS
-    Plays a match between a Chess2D bot and an opponent with cutechess-cli and estimates the bot's Elo.
+    Plays a match between a Chess2D bot and an opponent with cutechess-cli (or fastchess) and estimates the bot's Elo.
 
 .DESCRIPTION
-    On first run it downloads cutechess-cli and Stockfish into Tools\external (ignored by git).
+    On first run it downloads cutechess-cli and Stockfish into Tools\external (ignored by git);
+    with -Fastchess also fastchess and the opening books.
     Then it builds the UCI front-end (Tools\Chess2D.Uci) and plays the match.
     The opponent is Stockfish with limited strength (UCI_Elo), or another Chess2D bot (-OpponentBot).
 
@@ -27,6 +28,11 @@
     .\match.ps1 -Bot v19 -OpponentBot v18 -OpponentSource C:\temp\chess2d-old -OpponentLabel old
     The opponent is built from another copy of the repository (e.g. an older commit or another branch),
     so the same bot can be compared before and after a change in the shared engine code.
+
+.EXAMPLE
+    .\match.ps1 -Bot v20 -OpponentBot v19 -Fastchess -Sprt -Elo1 30 -Games 1000 -TimeControl 20+0.2 -Concurrency 8
+    The same SPRT with fastchess: games start from an opening book (each opening once with each colour,
+    the bots' own book is switched off) and the statistics count game pairs, so tests need fewer games.
 #>
 param(
     [string]$Bot = "v2",
@@ -48,7 +54,12 @@ param(
     [string]$OpponentSource = "",
     # Added to the engine name in the PGN/log, e.g. "Chess2D-v18-old"
     [string]$BotLabel = "",
-    [string]$OpponentLabel = ""
+    [string]$OpponentLabel = "",
+    # Play with fastchess instead of cutechess-cli, starting the games from an opening book
+    [switch]$Fastchess,
+    # Opening book for fastchess: a file name in Tools\external\openings or a full path. Default:
+    # UHO_4060_v2.epd (unbalanced, fewer draws) against another bot, 8moves_v3.pgn (balanced) against Stockfish
+    [string]$Openings = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -79,13 +90,36 @@ function Find-Exe([string]$dir, [string]$filter) {
 }
 
 # --- Tools ---
-$cutechess = Find-Exe (Join-Path $external "cutechess") "cutechess-cli.exe"
-if (-not $cutechess) {
-    Install-GitHubRelease "cutechess/cutechess" "win64\.zip$" (Join-Path $external "cutechess")
-    $cutechess = Find-Exe (Join-Path $external "cutechess") "cutechess-cli.exe"
+$useStockfish = [string]::IsNullOrEmpty($OpponentBot)
+
+if ($Fastchess) {
+    $runner = Find-Exe (Join-Path $external "fastchess") "fastchess.exe"
+    if (-not $runner) {
+        Install-GitHubRelease "Disservin/fastchess" "windows-x86-64\.zip$" (Join-Path $external "fastchess")
+        $runner = Find-Exe (Join-Path $external "fastchess") "fastchess.exe"
+    }
+
+    # Opening books from the Stockfish project (https://github.com/official-stockfish/books)
+    if (-not $Openings) { $Openings = if ($useStockfish) { "8moves_v3.pgn" } else { "UHO_4060_v2.epd" } }
+    $openingsFile = if (Test-Path $Openings) { (Resolve-Path $Openings).Path } else { Join-Path $external "openings\$Openings" }
+    if (-not (Test-Path $openingsFile)) {
+        $name = Split-Path $openingsFile -Leaf
+        Write-Host "Downloading opening book $name..."
+        New-Item -ItemType Directory -Force (Split-Path $openingsFile -Parent) | Out-Null
+        $zip = "$openingsFile.zip"
+        Invoke-WebRequest "https://github.com/official-stockfish/books/raw/master/$name.zip" -OutFile $zip
+        Expand-Archive $zip -DestinationPath (Split-Path $openingsFile -Parent) -Force
+        Remove-Item $zip
+    }
+    $openingsFormat = if ($openingsFile -match "\.pgn$") { "pgn" } else { "epd" }
+} else {
+    $runner = Find-Exe (Join-Path $external "cutechess") "cutechess-cli.exe"
+    if (-not $runner) {
+        Install-GitHubRelease "cutechess/cutechess" "win64\.zip$" (Join-Path $external "cutechess")
+        $runner = Find-Exe (Join-Path $external "cutechess") "cutechess-cli.exe"
+    }
 }
 
-$useStockfish = [string]::IsNullOrEmpty($OpponentBot)
 if ($useStockfish) {
     $stockfish = Find-Exe (Join-Path $external "stockfish") "stockfish*.exe"
     if (-not $stockfish) {
@@ -123,19 +157,28 @@ function Build-Uci([string]$sourceRoot, [string]$folder) {
 $uci = Build-Uci $BotSource "bot"
 $opponentUci = if ($OpponentSource -ne $BotSource) { Build-Uci $OpponentSource "opponent" } else { $uci }
 
-# Remove build folders of earlier matches (skipped silently if a match is still using them)
-Get-ChildItem (Join-Path $root "bin\uci") -Directory | Where-Object { $_.Name -ne $stamp } | ForEach-Object {
+# Remove build folders of earlier matches. Only old ones: a match running in parallel may still be using
+# a recent one, and deleting part of its files (e.g. the opening book) would break its engines.
+Get-ChildItem (Join-Path $root "bin\uci") -Directory |
+    Where-Object { $_.Name -ne $stamp -and $_.LastWriteTime -lt (Get-Date).AddHours(-12) } | ForEach-Object {
     try { Remove-Item $_.FullName -Recurse -Force -ErrorAction Stop } catch { }
 }
 
 # --- Match ---
 # Depth 0 = don't pass it: fixed-depth bots then use their default (3), time-managed bots (v11+)
-# search as deep as the clock allows
+# search as deep as the clock allows. With an opening book the bots' own book is switched off.
 function Get-ChessEngineArgs([string]$botVersion, [int]$botDepth, [string]$exe, [string]$label) {
     $name = if ($botDepth -gt 0) { "Chess2D-$botVersion-d$botDepth" } else { "Chess2D-$botVersion" }
     if ($label) { $name += "-$label" }
-    $engine = @("-engine", "name=$name", "cmd=$exe", "arg=--bot", "arg=$botVersion")
-    if ($botDepth -gt 0) { $engine += @("arg=--depth", "arg=$botDepth") }
+    $uciArgs = @("--bot", $botVersion)
+    if ($botDepth -gt 0) { $uciArgs += @("--depth", "$botDepth") }
+    if ($Fastchess) {
+        $uciArgs += "--no-book"
+        # fastchess takes all engine arguments in one "args=..." value
+        $engine = @("-engine", "name=$name", "cmd=$exe", "args=$($uciArgs -join ' ')")
+    } else {
+        $engine = @("-engine", "name=$name", "cmd=$exe") + ($uciArgs | ForEach-Object { "arg=$_" })
+    }
     return $name, $engine
 }
 
@@ -154,27 +197,41 @@ $log = [IO.Path]::ChangeExtension($pgn, ".log")
 
 # -games 2 per round = each opening played once with each color
 $rounds = [Math]::Max(1, [Math]::Ceiling($Games / 2))
-$cutechessArgs = $engineArgs + $opponentArgs + @(
+$culture = [Globalization.CultureInfo]::InvariantCulture
+$runnerArgs = $engineArgs + $opponentArgs + @(
     "-each", "proto=uci", "tc=$TimeControl",
     "-games", "2", "-rounds", "$rounds",
     "-concurrency", "$Concurrency",
     "-maxmoves", "$MaxMoves",
     "-ratinginterval", "10",
-    "-recover",
-    "-pgnout", $pgn
+    "-recover"
 )
+if ($Fastchess) {
+    # -repeat: both games of a round start from the same opening, with the colours swapped.
+    # Output in cutechess format, so the summary below works for both runners.
+    $runnerArgs += @("-repeat",
+                     "-openings", "file=$openingsFile", "format=$openingsFormat", "order=random",
+                     "-output", "format=cutechess",
+                     "-pgnout", "file=$pgn")
+} else {
+    $runnerArgs += @("-pgnout", $pgn)
+}
 if ($Sprt) {
-    # alpha/beta: 5% chance of accepting the wrong hypothesis in either direction
-    $culture = [Globalization.CultureInfo]::InvariantCulture
-    $cutechessArgs += @("-sprt", "elo0=$($Elo0.ToString($culture))", "elo1=$($Elo1.ToString($culture))", "alpha=0.05", "beta=0.05")
+    # alpha/beta: 5% chance of accepting the wrong hypothesis in either direction.
+    # fastchess: the logistic model, so Elo0/Elo1 mean the same as with cutechess.
+    $runnerArgs += @("-sprt", "elo0=$($Elo0.ToString($culture))", "elo1=$($Elo1.ToString($culture))", "alpha=0.05", "beta=0.05")
+    if ($Fastchess) { $runnerArgs += "model=logistic" }
 }
 
 $mode = if ($Sprt) { "SPRT elo0=$Elo0 elo1=$Elo1, at most $($rounds * 2) games" } else { "$($rounds * 2) games" }
-Write-Host "Match: $botName vs $opponentName, $mode, tc=$TimeControl, concurrency=$Concurrency"
+$runnerName = if ($Fastchess) { "fastchess, openings $(Split-Path $openingsFile -Leaf)" } else { "cutechess" }
+Write-Host "Match: $botName vs $opponentName, $mode, tc=$TimeControl, concurrency=$Concurrency ($runnerName)"
 Write-Host "PGN: $pgn"
-# Warnings that cutechess prints to stderr must not abort the match
+# Warnings that the runner prints to stderr must not abort the match.
+# fastchess warns on every move that our engine reports no score; those lines are left out.
 $ErrorActionPreference = "Continue"
-& $cutechess @cutechessArgs 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $log
+& $runner @runnerArgs 2>&1 | ForEach-Object { "$_" -replace "\x1b\[[0-9;]*m", "" } |
+    Where-Object { $_ -notmatch "No info line available to extract score" } | Tee-Object -FilePath $log
 $ErrorActionPreference = "Stop"
 
 # --- Summary ---
@@ -185,7 +242,7 @@ if ($eloLine) {
     Write-Host ""
     Write-Host "Elo difference ($botName vs $opponentName): $diff +/- $margin"
     if ($useStockfish -and $diff -notmatch "inf") {
-        $estimate = [Math]::Round($StockfishElo + [double]::Parse($diff, [Globalization.CultureInfo]::InvariantCulture))
+        $estimate = [Math]::Round($StockfishElo + [double]::Parse($diff, $culture))
         Write-Host "Estimated Elo of ${botName}: about $estimate (Stockfish UCI_Elo scale)"
     }
     if ($diff -match "inf") {
@@ -203,7 +260,7 @@ if ($Sprt) {
     }
 }
 
-$timeLosses =(Select-String -Path $log -Pattern "^Finished game .*loses on time").Count
+$timeLosses = (Select-String -Path $log -Pattern "^Finished game .*(loses on time|time forfeit)").Count
 if ($timeLosses -gt 0) {
     Write-Warning ("$timeLosses game(s) were lost on time. The result is unreliable - " +
                    "lower -Concurrency or use a longer -TimeControl.")

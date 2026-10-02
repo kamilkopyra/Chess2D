@@ -44,6 +44,8 @@ powershell -ExecutionPolicy Bypass -File .\match.ps1 -Bot v16 -OpponentBot v15 -
 | `-Elo0` / `-Elo1` | `0` / `10` | SPRT hypotheses: H0 "not stronger than Elo0", H1 "stronger by at least Elo1" |
 | `-BotSource` / `-OpponentSource` | this repository | build that engine from another copy of the repository (another branch or commit, e.g. a `git worktree`) |
 | `-BotLabel` / `-OpponentLabel` | – | suffix for the engine name in the PGN/log, e.g. `-OpponentLabel old` → `Chess2D-v18-old` |
+| `-Fastchess` | off | play with [fastchess](https://github.com/Disservin/fastchess) instead of cutechess-cli: games start from an opening book, each opening is played once with each colour, the bots' own book is off, SPRT statistics count game pairs (fewer games needed) |
+| `-Openings` | see below | opening book for `-Fastchess`: a file name in `Tools/external/openings` or a full path. Default: `UHO_4060_v2.epd` against another bot (unbalanced openings, fewer draws), `8moves_v3.pgn` against Stockfish (balanced, as the `UCI_Elo` scale assumes). Books come from [official-stockfish/books](https://github.com/official-stockfish/books) and are downloaded on first use |
 
 Games (PGN) and logs are saved in `Tools/matches/`.
 
