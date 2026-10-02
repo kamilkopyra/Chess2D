@@ -10,7 +10,7 @@ namespace ChessEngine
         [ThreadStatic] private static Random threadRandom;
         protected static Random rand => threadRandom ??= new Random(Guid.NewGuid().GetHashCode());
 
-        protected const int MateScore = 1_000_000;
+        public const int MateScore = 1_000_000;
         protected const int Infinity = 10_000_000;
 
         public abstract Move ChooseMove(Position position);

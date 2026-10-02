@@ -12,7 +12,7 @@ namespace ChessEngine
     // - The penalty for moving to a square attacked by an enemy pawn is kept for non-captures only:
     //   for captures SEE already accounts for it.
     // Everything else is the same as in v19.
-    public class Bot_v20 : BotBase, ITimedBot
+    public class Bot_v20 : BotBase, ITimedBot, ISearchInfo
     {
         private const int MaxPly = 64;
 
@@ -94,6 +94,11 @@ namespace ChessEngine
 
         public int MoveTimeMs { get; set; } = 1000;
         public int LastDepth { get; private set; }
+        public int LastScore { get; private set; }
+        public long LastNodes { get; private set; }
+
+        // Best score of the last completed root search (SearchRoot)
+        private int rootScore;
 
         // Reused for every node at a given ply: generated moves and their ordering scores
         private readonly List<Move>[] moveLists = new List<Move>[MaxPly];
@@ -126,6 +131,8 @@ namespace ChessEngine
             }
 
             LastDepth = 0;
+            LastScore = 0;
+            LastNodes = 0;
             if (OpeningBook.Default != null && OpeningBook.Default.TryGetMove(position, rand, out Move bookMove))
             {
                 return bookMove;
@@ -151,6 +158,7 @@ namespace ChessEngine
 
                 bestMoves = result;
                 LastDepth = currentDepth;
+                LastScore = rootScore;
 
                 // Remember the best line for ordering in the next iteration
                 previousPvLength = pvLength[0];
@@ -164,6 +172,7 @@ namespace ChessEngine
                 if (watch.ElapsedMilliseconds * 2 > MoveTimeMs) break;
             }
 
+            LastNodes = nodes;
             return bestMoves[rand.Next(bestMoves.Count)];
         }
 
@@ -210,6 +219,7 @@ namespace ChessEngine
                 }
             }
 
+            rootScore = bestScore;
             return bestMoves;
         }
 

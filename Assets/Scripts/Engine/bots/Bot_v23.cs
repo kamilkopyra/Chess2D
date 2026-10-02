@@ -3,12 +3,12 @@ using System.Collections.Generic;
 
 namespace ChessEngine
 {
-    // Bot v25: v22 with Texel-tuned evaluation weights.
+    // Bot v23: v22 with Texel-tuned evaluation weights.
     // The evaluation is the same as in v22 (material, piece-square tables, pawn structure, king shelter,
     // mobility, threats, outposts; king attack and mop-up unchanged), but all its numbers were fitted to
     // predict the results of ~1.5 million positions from real games (Tools/Chess2D.Tune -> TunedWeights.cs).
     // The search is the same as in v22.
-    public class Bot_v25 : BotBase, ITimedBot
+    public class Bot_v23 : BotBase, ITimedBot, ISearchInfo
     {
         private const int MaxPly = 64;
 
@@ -97,6 +97,11 @@ namespace ChessEngine
 
         public int MoveTimeMs { get; set; } = 1000;
         public int LastDepth { get; private set; }
+        public int LastScore { get; private set; }
+        public long LastNodes { get; private set; }
+
+        // Best score of the last completed root search (SearchRoot)
+        private int rootScore;
 
         // Reused for every node at a given ply: generated moves and their ordering scores
         private readonly List<Move>[] moveLists = new List<Move>[MaxPly];
@@ -104,7 +109,7 @@ namespace ChessEngine
         private readonly List<Move> scratchMoves = new List<Move>(256);
 
         // depth: maximum search depth; normally the time budget stops the search earlier
-        public Bot_v25(int depth = 64)
+        public Bot_v23(int depth = 64)
         {
             this.depth = Math.Min(depth, MaxPly - 1);
             for (int ply = 0; ply < MaxPly; ply++)
@@ -129,6 +134,8 @@ namespace ChessEngine
             }
 
             LastDepth = 0;
+            LastScore = 0;
+            LastNodes = 0;
             if (OpeningBook.Default != null && OpeningBook.Default.TryGetMove(position, rand, out Move bookMove))
             {
                 return bookMove;
@@ -154,6 +161,7 @@ namespace ChessEngine
 
                 bestMoves = result;
                 LastDepth = currentDepth;
+                LastScore = rootScore;
 
                 // Remember the best line for ordering in the next iteration
                 previousPvLength = pvLength[0];
@@ -167,6 +175,7 @@ namespace ChessEngine
                 if (watch.ElapsedMilliseconds * 2 > MoveTimeMs) break;
             }
 
+            LastNodes = nodes;
             return bestMoves[rand.Next(bestMoves.Count)];
         }
 
@@ -213,6 +222,7 @@ namespace ChessEngine
                 }
             }
 
+            rootScore = bestScore;
             return bestMoves;
         }
 

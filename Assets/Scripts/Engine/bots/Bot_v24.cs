@@ -3,21 +3,11 @@ using System.Collections.Generic;
 
 namespace ChessEngine
 {
-    // Bot v19: exactly Bot_v18 (same search, same evaluation, same chess), running on the bitboard Position:
-    // attacks and move generation use bitboards and magic bitboards, so the search is faster.
-    // The generator returns moves in the same order as before, so v19 searches the same tree as v18 at a given depth.
-    // Below: the description of v18.
-    //
-    // Bot v18: v17 + more pruning.
-    // - PVS (principal variation search): only the first move gets the full (alpha, beta) window. The others are
-    //   searched with a null window (alpha, alpha + 1) - "is it better than the first one?" - which is cheaper;
-    //   the rare move that is better gets searched again with the full window.
-    // - Reverse futility pruning: near the leaves, if the static score is far above beta, return beta right away.
-    // - Futility pruning: near the leaves, if the static score is far below alpha, quiet moves can't raise it
-    //   enough - skip them (captures, promotions and checks are still searched).
-    // - Delta pruning in quiescence: skip captures that can't bring the score up to alpha even when the
-    //   captured piece is won for free.
-    public class Bot_v19 : BotBase, ITimedBot, ISearchInfo
+    // Tuned at 2.5 mln postitions + stockfish evaluation of the position 
+    // Bot v24: v23 with weights tuned on better targets: each position's target is half the game result and
+    // half Stockfish's evaluation of it (turned into an expected score), which is much less noisy than the
+    // result alone. Same features and search as v23 (TunedWeightsSf, Tools/Chess2D.Tune --lambda 0.5).
+    public class Bot_v24 : BotBase, ITimedBot, ISearchInfo
     {
         private const int MaxPly = 64;
 
@@ -36,16 +26,26 @@ namespace ChessEngine
         // Futility pruning: margin by remaining depth (index 1 and 2)
         private static readonly int[] FutilityMargin = { 0, 150, 300 };
 
+        // Late move pruning: remaining depth up to this. At depth d, once LmpBase + d * d quiet moves have
+        // been searched (4, 7 and 12 at depths 1-3), the remaining quiet moves that don't give check are skipped.
+        // Typical engines use similar numbers; quadratic growth keeps LMP gentle at depth 3, where it would
+        // otherwise cut away most of the tree under a node.
+        private const int LmpMaxDepth = 3;
+        private const int LmpBase = 3;
+
         // Delta pruning: safety margin on top of the captured piece's value
         private const int DeltaMargin = 200;
 
         // Ordering scores (only the relative order matters):
-        // PV move > table move > captures/promotions and killers > quiet moves by history
+        // PV move > table move > good captures (SEE >= 0) and promotions > killers > quiet moves by history
+        // > losing captures (SEE < 0)
         private const int PvMoveBonus = 100_000_000;
         private const int TableMoveBonus = 99_999_999;
         private const int CaptureBase = 10_000_000;              // + MVV-LVA (PxP = 900)
-        private const int FirstKillerBonus = CaptureBase + 800;  // below equal/winning captures, above quiet moves
+        private const int GoodCaptureBonus = 1_000;              // lifts every good capture (QxP = 100) above the killers
+        private const int FirstKillerBonus = CaptureBase + 800;  // below good captures, above quiet moves
         private const int SecondKillerBonus = CaptureBase + 700;
+        private const int BadCaptureBase = -CaptureBase;         // + SEE (negative): below every quiet move
 
         // History values stay far below CaptureBase: when one gets this big, all of them are halved
         private const int HistoryLimit = 1_000_000;
@@ -108,7 +108,7 @@ namespace ChessEngine
         private readonly List<Move> scratchMoves = new List<Move>(256);
 
         // depth: maximum search depth; normally the time budget stops the search earlier
-        public Bot_v19(int depth = 64)
+        public Bot_v24(int depth = 64)
         {
             this.depth = Math.Min(depth, MaxPly - 1);
             for (int ply = 0; ply < MaxPly; ply++)
@@ -319,11 +319,28 @@ namespace ChessEngine
             bool futile = !onPv && !inCheck && !nearMate && depth < FutilityMargin.Length
                           && staticEval + FutilityMargin[depth] <= alpha;
 
+            // Late move pruning: only near the leaves, off the PV, not in check and not near mate scores.
+            // quietSearched counts quiet moves (killers and checking moves included) that were actually
+            // searched in this node; moves skipped by futility or LMP don't count.
+            bool lmpNode = !onPv && !inCheck && !nearMate && depth <= LmpMaxDepth;
+            int lmpLimit = LmpBase + depth * depth;
+            int quietSearched = 0;
+
             for (int moveIndex = 0; moveIndex < moves.Count; moveIndex++)
             {
                 Move move = moves[moveIndex];
                 bool quiet = !move.IsCapture && !move.IsPromotion;
                 bool killer = move == killers[ply, 0] || move == killers[ply, 1];
+
+                // LMP: decided before making the move, GivesCheck answers without changing the position.
+                // The first move is never pruned (the limit is at least 4 searched quiet moves anyway).
+                // Skipped moves are simply not searched: if nothing else beats alpha, the node still
+                // returns alpha as an upper bound, same as with futility pruning.
+                if (lmpNode && quiet && !killer && moveIndex > 0 && quietSearched >= lmpLimit
+                    && !GivesCheck(position, move))
+                {
+                    continue;
+                }
 
                 position.MakeMove(move);
                 bool givesCheck = position.InCheck;
@@ -334,6 +351,8 @@ namespace ChessEngine
                     position.UnmakeMove();
                     continue;
                 }
+
+                if (quiet) quietSearched++;
 
                 int score;
                 if (moveIndex == 0)
@@ -437,10 +456,16 @@ namespace ChessEngine
             }
 
             SortMoves(position, moves, ply, default, default);
+            int[] scores = moveScores[ply];
 
             Side us = position.SideToMove;
-            foreach (var move in moves)
+            for (int moveIndex = 0; moveIndex < moves.Count; moveIndex++)
             {
+                Move move = moves[moveIndex];
+
+                // Losing captures (SEE < 0) are sorted last: once the first one is reached, the rest lose too
+                if (!inCheck && scores[moveIndex] < 0) break;
+
                 // Delta pruning: even winning the captured piece for free (plus a margin) wouldn't reach alpha
                 if (!inCheck && !move.IsPromotion)
                 {
@@ -474,7 +499,44 @@ namespace ChessEngine
 
         private static int Evaluate(Position position)
         {
-            return Evaluation.EvaluateFull(position);
+            return TunableEvaluation.Evaluate(position, TunedWeightsSf.Weights);
+        }
+
+        // Whether the move, made by the side to move, would give check - without making it.
+        // On bitboards: the occupied squares as they will be after the move (`from` empty, `to` occupied),
+        // then the enemy king is checked directly by the moved piece or by one of our sliders uncovered
+        // by leaving `from` (a discovered check). Castling, en passant and promotions change more squares
+        // or the piece type: for those (rare) moves it just makes the move and looks.
+        public static bool GivesCheck(Position position, Move move)
+        {
+            if (move.IsCastle || move.IsEnPassant || move.IsPromotion)
+            {
+                position.MakeMove(move);
+                bool check = position.InCheck;
+                position.UnmakeMove();
+                return check;
+            }
+
+            Side us = position.SideToMove;
+            int king = position.KingSquare(us.Opponent());
+            ulong kingBit = 1UL << king;
+            ulong fromBit = 1UL << move.From, toBit = 1UL << move.To;
+            PieceType moving = position[move.From].Type;
+
+            // Direct check by a knight or pawn on its new square (a discovered check is still possible otherwise)
+            if (moving == PieceType.Knight && (Bitboards.KnightAttacks[move.To] & kingBit) != 0) return true;
+            if (moving == PieceType.Pawn && (Bitboards.PawnAttacks[(int)us][move.To] & kingBit) != 0) return true;
+
+            // Our sliders after the move: the moving piece counts on `to`, nothing stays on `from`
+            ulong occupied = (position.Occupied & ~fromBit) | toBit;
+            ulong queens = position.Pieces(PieceType.Queen, us);
+            ulong rooks = (position.Pieces(PieceType.Rook, us) | queens) & ~fromBit;
+            ulong bishops = (position.Pieces(PieceType.Bishop, us) | queens) & ~fromBit;
+            if (moving == PieceType.Rook || moving == PieceType.Queen) rooks |= toBit;
+            if (moving == PieceType.Bishop || moving == PieceType.Queen) bishops |= toBit;
+
+            return (Bitboards.RookAttacks(king, occupied) & rooks) != 0
+                || (Bitboards.BishopAttacks(king, occupied) & bishops) != 0;
         }
 
         // Whether the side has anything besides the king and pawns. With only pawns, zugzwang is common
@@ -592,23 +654,33 @@ namespace ChessEngine
             if (move == pvMove) return PvMoveBonus;
             if (move == tableMove) return TableMoveBonus;
 
-            int score = 0;
-            if (move.IsCapture || move.IsPromotion)
-            {
-                score += CaptureBase;
-            }
-
             if (move.IsCapture)
             {
                 // Captures: most valuable victim first, least valuable attacker first (MVV-LVA)
-                if (move.IsEnPassant)
+                int attacker = PieceGrades[(int)position[move.From].Type];
+                int victim = move.IsEnPassant ? PieceGrades[(int)PieceType.Pawn] : PieceGrades[(int)position[move.To].Type];
+                int mvvLva = victim * 10 - attacker;
+                int promotion = move.IsPromotion ? PieceGrades[(int)move.Promotion] * 5 : 0;
+
+                // Taking a piece worth at least the attacker can't lose material: no need for SEE.
+                // Promotions always stay in the good band (as in v18).
+                if (move.IsPromotion || (victim >= attacker && position[move.From].Type != PieceType.King))
                 {
-                    score += PieceGrades[(int)PieceType.Pawn] * 9;
+                    return CaptureBase + GoodCaptureBonus + mvvLva + promotion;
                 }
-                else
+
+                int see = See.Evaluate(position, move);
+                if (see >= 0)
                 {
-                    score += PieceGrades[(int)position[move.To].Type] * 10 - PieceGrades[(int)position[move.From].Type];
+                    return CaptureBase + GoodCaptureBonus + mvvLva;
                 }
+                return BadCaptureBase + see;
+            }
+
+            int score = 0;
+            if (move.IsPromotion)
+            {
+                score += CaptureBase + PieceGrades[(int)move.Promotion] * 5;
             }
             else if (killers[ply, 0] == move)
             {
@@ -618,15 +690,10 @@ namespace ChessEngine
             {
                 score += SecondKillerBonus;
             }
-            else if (!move.IsPromotion)
+            else
             {
                 // Other quiet moves: by how often they caused cutoffs so far
                 score += history[(int)position.SideToMove, move.From, move.To];
-            }
-
-            if (move.IsPromotion)
-            {
-                score += PieceGrades[(int)move.Promotion] * 5;
             }
 
             // Moving a piece to a square attacked by an enemy pawn usually just loses it, so try such moves last

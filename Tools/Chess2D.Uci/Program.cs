@@ -181,8 +181,28 @@ namespace Chess2D.Uci
             var watch = System.Diagnostics.Stopwatch.StartNew();
             Move move = bot.ChooseMove(position);
             int reachedDepth = bot is ITimedBot timed ? timed.LastDepth : depth;
-            Console.WriteLine($"info depth {reachedDepth} time {watch.ElapsedMilliseconds}");
+            long elapsed = watch.ElapsedMilliseconds;
+            if (bot is ISearchInfo info && reachedDepth > 0)
+            {
+                // Score, nodes and speed too, so GUIs and match tools (fastchess, cutechess) can record them
+                long nps = info.LastNodes * 1000 / Math.Max(1, elapsed);
+                Console.WriteLine($"info depth {reachedDepth} score {UciScore(info.LastScore)} nodes {info.LastNodes} nps {nps} time {elapsed}");
+            }
+            else
+            {
+                Console.WriteLine($"info depth {reachedDepth} time {elapsed}");
+            }
             Console.WriteLine($"bestmove {move}");
+        }
+
+        // UCI score: "cp <centipawns>", or "mate <moves>" (negative when getting mated) for mate scores
+        static string UciScore(int score)
+        {
+            const int mateThreshold = BotBase.MateScore - 1000;
+            if (Math.Abs(score) < mateThreshold) return "cp " + score;
+            int plies = BotBase.MateScore - Math.Abs(score);
+            int moves = (plies + 1) / 2;
+            return "mate " + (score > 0 ? moves : -moves);
         }
 
         // Time for this move: "movetime" if given, otherwise a share of the remaining clock.
