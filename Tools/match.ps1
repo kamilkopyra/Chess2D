@@ -230,13 +230,21 @@ Write-Host "PGN: $pgn"
 # Warnings that the runner prints to stderr must not abort the match.
 # fastchess warns on every move that our engine reports no score; those lines are left out.
 $ErrorActionPreference = "Continue"
+# Two logs: <name>.full.log with everything the runner prints, and <name>.log with only the match itself
+# (games, scores, Elo, summary). fastchess repeats engine warnings with the whole position and the engine's
+# last "info" line ("Position; ...", "Moves; ...", "Warning; ...", "Info; ..."), which bury the results.
+$fullLog = [IO.Path]::ChangeExtension($pgn, ".full.log")
+$fullWriter = New-Object IO.StreamWriter($fullLog, $false, (New-Object Text.UTF8Encoding($false)))
 # fastchess saves its state (config.json, for -recover) in the current directory: run it in Tools\matches
 Push-Location $matchesDir
 try {
     & $runner @runnerArgs 2>&1 | ForEach-Object { "$_" -replace "\x1b\[[0-9;]*m", "" } |
-        Where-Object { $_ -notmatch "No info line available to extract score" } | Tee-Object -FilePath $log
+        ForEach-Object { $fullWriter.WriteLine($_); $fullWriter.Flush(); $_ } |
+        Where-Object { $_ -notmatch "No info line available to extract score" -and $_ -notmatch "^(Position|Moves|Warning|Info);" } |
+        Tee-Object -FilePath $log
 } finally {
     Pop-Location
+    $fullWriter.Dispose()
 }
 $ErrorActionPreference = "Stop"
 

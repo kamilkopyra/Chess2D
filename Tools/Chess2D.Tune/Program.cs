@@ -12,10 +12,18 @@ namespace Chess2D.Tune
 {
     // Texel tuning of TunableEvaluation.
     //
-    //   Chess2D.Tune extract --out positions.txt [--per-game 8] [--skip-plies 16] [--max 2000000] games1.pgn games2.pgn ...
+    //   Chess2D.Tune extract --out positions.txt [--per-game 8] [--skip-plies 16] [--max 2000000]
+    //                        [--min-elo 1800] [--low-elo-keep 0.25] [--min-seconds 180] [--dedup-bits 32] games1.pgn ...
     //       Quiet positions from finished games, one per line: "FEN;result" (1 = White won, 0.5 = draw, 0 = Black won).
+    //       A file name "-" reads the games from standard input (zstd -dc lichess.pgn.zst | ... -).
+    //       --min-elo: games where both players have at least this rating are used; of the other games only the
+    //       fraction --low-elo-keep. --min-seconds: games whose estimated duration (base + 40 * increment, the way
+    //       Lichess counts it) is shorter are skipped (180 = no bullet). --dedup-bits: positions already written
+    //       (by Zobrist hash, in a table of 2^bits bits) are skipped; when the table fills up, a few new positions
+    //       are skipped too (about positions / 2^bits of them).
     //
     //   Chess2D.Tune label --data positions.txt --out labelled.txt --stockfish stockfish.exe [--threads 4] [--nodes 5000]
+    //                      [--clear-hash]
     //       Adds a Stockfish evaluation to every position: "FEN;result;score" (see Label.cs).
     //
     //   Chess2D.Tune tune --data positions.txt [--epochs 500] [--rate 1] [--max 2000000] [--lambda 0.5] [--features full]
@@ -79,15 +87,36 @@ namespace Chess2D.Tune
             int perGame = Int(options, "per-game", 8);
             int skipPlies = Int(options, "skip-plies", 16);
             int max = Int(options, "max", 2_000_000);
+            int minElo = Int(options, "min-elo", 0);
+            double lowEloKeep = Double(options, "low-elo-keep", 1.0);
+            int minSeconds = Int(options, "min-seconds", 0);
+            int dedupBits = Int(options, "dedup-bits", 0);
             var random = new Random(12345);
             var trace = new TunableEvaluation.Trace();
+            ulong[] seen = dedupBits > 0 ? new ulong[(1L << dedupBits) / 64] : null;
+            ulong seenMask = dedupBits > 0 ? (1UL << dedupBits) - 1 : 0;
 
-            int games = 0, skipped = 0, written = 0;
+            long read = 0;
+            int games = 0, skipped = 0, written = 0, duplicates = 0;
             var watch = Stopwatch.StartNew();
-            using var writer = new StreamWriter(output, false, new UTF8Encoding(false));
+
+            // Decided from the headers alone, before the moves are parsed
+            bool Keep(PgnGame game)
+            {
+                read++;
+                if (read % 1_000_000 == 0)
+                    Console.WriteLine($"  {read} games read, {games} used, {written} positions, {duplicates} duplicates ({watch.Elapsed:hh\\:mm\\:ss})");
+                if (written >= max) return false;
+                if (minSeconds > 0 && EstimatedSeconds(game) < minSeconds) return false;
+                if (minElo > 0 && (Elo(game, "WhiteElo") < minElo || Elo(game, "BlackElo") < minElo)
+                    && random.NextDouble() >= lowEloKeep) return false;
+                return true;
+            }
+
+            using var writer = new StreamWriter(output, false, new UTF8Encoding(false), 1 << 20);
             foreach (string file in pgnFiles)
             {
-                foreach (PgnGame game in PgnGame.ReadAll(file))
+                foreach (PgnGame game in PgnGame.ReadAll(file, Keep))
                 {
                     if (written >= max) break;
                     string label = game.Result switch { "1-0" => "1", "0-1" => "0", "1/2-1/2" => "0.5", _ => null };
@@ -98,6 +127,7 @@ namespace Chess2D.Tune
                     catch { skipped++; continue; }
 
                     var quiet = new List<string>();
+                    var quietHashes = new List<ulong>();
                     int ply = 0;
                     bool broken = false;
                     foreach (string san in game.Moves)
@@ -105,27 +135,61 @@ namespace Chess2D.Tune
                         if (!San.TryParse(position, san, out Move move)) { broken = true; break; }
                         position.MakeMove(move);
                         ply++;
-                        if (ply >= skipPlies && IsQuiet(position, trace)) quiet.Add(position.ToFen());
+                        if (ply >= skipPlies && IsQuiet(position, trace))
+                        {
+                            quiet.Add(position.ToFen());
+                            quietHashes.Add(position.Hash);
+                        }
                     }
                     if (broken) { skipped++; continue; }
                     games++;
 
                     // A few random quiet positions per game: positions of one game are strongly correlated
-                    for (int i = 0; i < perGame && quiet.Count > 0 && written < max; i++)
+                    // A duplicate doesn't use up the game's quota: another position of the game is tried instead
+                    int taken = 0;
+                    while (taken < perGame && quiet.Count > 0 && written < max)
                     {
                         int pick = random.Next(quiet.Count);
-                        writer.Write(quiet[pick]);
+                        string fen = quiet[pick];
+                        ulong hash = quietHashes[pick];
+                        quiet.RemoveAt(pick);
+                        quietHashes.RemoveAt(pick);
+                        if (seen != null)
+                        {
+                            ulong bit = hash & seenMask;
+                            ulong flag = 1UL << (int)(bit & 63);
+                            if ((seen[bit >> 6] & flag) != 0) { duplicates++; continue; }
+                            seen[bit >> 6] |= flag;
+                        }
+                        writer.Write(fen);
                         writer.Write(';');
                         writer.WriteLine(label);
-                        quiet.RemoveAt(pick);
                         written++;
+                        taken++;
                     }
 
-                    if (games % 20000 == 0) Console.WriteLine($"  {games} games, {written} positions ({watch.Elapsed:mm\\:ss})");
+                    if (games % 20000 == 0 && read < 1_000_000)
+                        Console.WriteLine($"  {games} games, {written} positions ({watch.Elapsed:mm\\:ss})");
                 }
             }
-            Console.WriteLine($"Games used: {games}, skipped: {skipped}, positions written: {written} -> {output}");
+            Console.WriteLine($"Games read: {read}, used: {games}, skipped: {skipped}, duplicates: {duplicates}, " +
+                              $"positions written: {written} -> {output} ({watch.Elapsed:hh\\:mm\\:ss})");
             return 0;
+        }
+
+        // Rating from a header ("?" or missing counts as 0)
+        static int Elo(PgnGame game, string header) =>
+            game.Headers.TryGetValue(header, out string v) && int.TryParse(v, out int elo) ? elo : 0;
+
+        // Estimated duration of a game in seconds from the TimeControl header ("180+2" -> 180 + 40 * 2),
+        // the way Lichess sorts games into bullet / blitz / rapid; correspondence ("-") or missing counts as long
+        static int EstimatedSeconds(PgnGame game)
+        {
+            if (!game.Headers.TryGetValue("TimeControl", out string tc)) return int.MaxValue;
+            int plus = tc.IndexOf('+');
+            if (plus < 0 || !int.TryParse(tc.Substring(0, plus), out int baseSeconds)
+                || !int.TryParse(tc.Substring(plus + 1), out int increment)) return int.MaxValue;
+            return baseSeconds + 40 * increment;
         }
 
         // Quiet = the static evaluation can be trusted: not in check, no capture that wins material (SEE > 0),

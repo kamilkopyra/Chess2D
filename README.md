@@ -23,7 +23,7 @@ faster and pruned harder (v26+).
 
 - Full chess rules: castling, en passant, promotion, check, checkmate, stalemate, the 50-move rule,
   threefold repetition and insufficient material
-- Play against another person on the same computer or against any bot version (v0 … v29), as White,
+- Play against another person on the same computer or against any bot version (v0 … v28), as White,
   Black or a random colour. Strength settings: search depth (fixed-depth bots) or time per move (bots v11+)
 - The bot thinks in the background, the game stays responsive; the depth it reached is shown next to its name
 - Premoves (queued while the bot is thinking, played right after its move)
@@ -114,21 +114,23 @@ version that stopped once the result was statistically clear (see [How the bots 
 | **v24** | The same features re-tuned on 2.5M positions with better targets: half the game result, half Stockfish's evaluation of the position | SPRT +50 ± 37 |
 | **v25** | Extended feature set, ~1300 tuned weights: tempo, mobility per number of squares, a king danger table, safe checks, pawn storms, weak squares around the king, backward / phalanx / supported pawns, passed pawn details (blocked, free path, king distances, rook behind), bad and trapped bishops, trapped rooks, minor pieces behind pawns, space, scale-down of drawish endgames (opposite-coloured bishops, no pawns and less than a rook up) | SPRT +106 ± 60 (stopped after 91 games, so the exact number is likely too high) |
 
-### Speed and pruning (v26 – v29)
+### Speed and pruning (v26 – v28)
 
 From here on a version is tested against the version it is built on (named in the table), with SPRT 0 / +15.
 
 | Version | What was added | Result |
 |---|---|---|
 | **v26** | v25 made faster without changing its play: an evaluation cache (position hash → score) and a pawn cache (the pawn-only terms stored per pawn structure); about 1.3× faster, identical search tree | SPRT +57 ± 31 vs v25 |
-| **v27** | v26 + the improving flag of v28 | SPRT vs v26 pending |
-| **v28** | v25 + "improving": the static score is compared with the one two plies earlier; when the position is getting worse, LMP keeps half as many quiet moves and LMR reduces one ply more, when it is improving reverse futility cuts with a smaller margin; about 1.5× fewer nodes to the same depth | SPRT +26 ± 19 vs v25 |
-| **v29** | v26 with the full feature set (tunable king danger inputs, threats by each piece type, pawn-dependent knight / rook values, rook pair, king distance to pawns), which lost as a v25 variant only because of its cost | SPRT vs v26 pending |
+| **v27** | "Improving": the static score is compared with the one two plies earlier; when the position is getting worse, LMP keeps half as many quiet moves and LMR reduces one ply more, when it is improving reverse futility cuts with a smaller margin; about 1.5× fewer nodes to the same depth. First tested on top of v25, then moved onto v26 | +26 ± 19 on top of v25 (SPRT); on top of v26 not decided: −8 ± 45 head-to-head (164 games, stopped), +15 against Stockfish 2800 (see below) |
+| **v28** | v27 with the full feature set (tunable king danger inputs, threats by each piece type, pawn-dependent knight / rook values, rook pair, king distance to pawns), which lost as a v25 variant only because of its cost. On top of v26 the same change measured +13 ± 17 after 902 games (stopped, a small gain) | against Stockfish 2800 no better than v26 (see below) |
+
+**v26 is the current best tested version.** v27 and v28 stay in the code but were not confirmed: the gain of
+"improving" shrank once v26 already searched deeper, and the full feature set doesn't pay for its cost.
 
 Experiments that did **not** make it (kept for reference, not in the code):
 contempt (scores draws slightly below 0: fewer draws, but ±0 Elo), quiet checks in quiescence (±0),
 a bucketed transposition table with ageing and packed entries (−31), the full feature set with a fully tunable
-king danger and more threats / material terms (−15 on top of v25; retried with the caches as v29), lazy
+king danger and more threats / material terms (−15 on top of v25; with the caches it became v28), lazy
 evaluation in quiescence (skip the full score when material and piece-square tables alone are 400 cp outside the
 window: −6 ± 20, the time saved was too small).
 
@@ -164,8 +166,12 @@ colours reversed) instead of cutechess with the bots' own book:
 | v24 | Stockfish 2600 | 60-21-19 | ≈ 2745 |
 | v25 (250 games) | Stockfish 2600 | 173-44-33 | ≈ 2800 (± 46) |
 | v25 (250 games) | Stockfish 2800 | 60-107-83 | ≈ 2735 (± 36) |
+| v26 (250 games) | Stockfish 2800 | 74-108-68 | ≈ 2752 (± 37) |
+| v27 (250 games) | Stockfish 2800 | 77-101-72 | ≈ 2767 (± 37) |
+| v28 (250 games) | Stockfish 2800 | 67-105-78 | ≈ 2747 (± 36) |
 
-**v25 is about 2750 – 2760** on this scale (both v25 matches combined, weighted by their error). The match
+**v25 is about 2750 – 2760** on this scale (both v25 matches combined, weighted by their error), and
+**v26 – v28 are about 2750 – 2770**: the differences between them are smaller than one match can separate. The match
 against the closer opponent (Stockfish 2800) is the more reliable one: the `UCI_Elo` scale is not perfectly
 linear, so a result far from 50% against a weaker setting overstates the rating a little.
 
@@ -193,14 +199,26 @@ driven by `Tools/match.ps1`. Details and all options are in [Tools/README.md](To
 
 `Tools/Chess2D.Tune` fits the evaluation weights (Texel tuning):
 
-1. `extract`: quiet positions (not in check, no winning capture) from PGN files, with the game result.
-2. `label` (optional): a Stockfish evaluation of every position (5000 nodes, several processes in parallel).
+1. `extract`: quiet positions (not in check, no winning capture) from PGN files or a stream (a compressed Lichess
+   database month through `zstd -dc`), with the game result; filters for rating and time control, duplicates removed.
+2. `label` (optional): a Stockfish evaluation of every position (5000 nodes, several processes in parallel,
+   streamed, resumable; about 1300 positions/s on 20 threads of an i7-14700HX).
 3. `tune`: finds the scaling constant K, then minimises the squared error between `sigmoid(eval)` and the target
    (game result, or a blend with Stockfish's expected score) with Adam gradient descent. The king danger of the
    full feature set is non-linear (squared) and handled with the chain rule. Writes a C# file with the weights.
 
 The tunable evaluation with its default weights scores exactly like the hand-written one (checked by unit tests),
 so tuning always starts from the known evaluation. See [Tools/README.md](Tools/README.md) for the commands.
+
+## Next steps
+
+1. **NNUE**: replace the hand-written evaluation with a small neural network (768 inputs → 256 → 1, updated
+   incrementally as moves are made) trained on about 100M positions from one month of Lichess games (rated
+   1800+ plus a share of weaker games, no bullet), each labelled by Stockfish at 5000 nodes. The data is being
+   produced on a second machine (`Tools/worker`), training will run in PyTorch on the GPU.
+2. **SPSA**: tune the search parameters (futility / reverse futility margins, LMR and LMP, null move, delta
+   pruning) together by playing many short games, after the network is in, since the margins depend on the
+   evaluation's scale.
 
 ## Tools and tests
 
@@ -209,6 +227,7 @@ so tuning always starts from the known evaluation. See [Tools/README.md](Tools/R
 | `Tools/Chess2D.Uci` | UCI front-end: any bot can play in chess GUIs and match tools; reports depth, score, nodes, nps |
 | `Tools/match.ps1` | Builds the engine and plays matches (Stockfish or another bot, SPRT, opening books, engines built from different branches/commits) |
 | `Tools/Chess2D.Tune` | Texel tuning: position extraction, Stockfish labelling, weight fitting |
+| `Tools/worker` | Scripts for a Linux machine that produces training data unattended (download, extract, label, compress) with a status page |
 
 Unit tests (NUnit, Unity Test Runner → EditMode) cover perft results, FEN, hashing, repetitions, the bitboard
 move generator against the reference generator, magic bitboards, SEE, opening book, evaluation symmetry
@@ -223,7 +242,7 @@ Assets/
 │   │   ├── Position.cs         # board, bitboards, make/unmake, move generation, FEN
 │   │   ├── Bitboards.cs, Bits.cs, Attacks.cs, Zobrist.cs, Types.cs
 │   │   ├── See.cs, Perft.cs, OpeningBook.cs
-│   │   └── bots/               # Bot_v0 … Bot_v29, Evaluation, TunableEvaluation, tuned weights, BotFactory
+│   │   └── bots/               # Bot_v0 … Bot_v28, Evaluation, TunableEvaluation, tuned weights, BotFactory
 │   ├── PieceMover.cs           # input, moves, bot opponent (background search), premoves, game end
 │   ├── PieceView.cs            # a piece on the board (sprite, animation)
 │   ├── BoardCreator.cs         # board, coordinates, themes, piece skins

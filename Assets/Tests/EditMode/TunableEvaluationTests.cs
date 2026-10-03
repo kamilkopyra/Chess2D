@@ -123,6 +123,36 @@ namespace ChessEngine.Tests
             }
         }
 
+        // The pawn cache only remembers the pawn-only part of the score: with or without it the score is the same,
+        // in every feature set (each cache is used with one weight array, like in a bot)
+        [TestCase(Position.StartFen)]
+        [TestCase("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1")]
+        [TestCase("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1")]
+        [TestCase("2kr3r/ppp2ppp/2n1b3/2b1p3/4P3/2NPB3/PPP2PPP/2KR1B1R b - - 0 1")]
+        public void PawnCacheGivesTheSameScore(string fen)
+        {
+            var random = new System.Random(fen.GetHashCode());
+            var weights = new int[2 * TunableEvaluation.TermCount];
+            for (int i = 0; i < weights.Length; i++) weights[i] = random.Next(-50, 51);
+            foreach (FeatureSet features in new[] { FeatureSet.Basic, FeatureSet.Extended, FeatureSet.Full })
+            {
+                var cache = new TunableEvaluation.PawnCache();
+                for (int game = 0; game < 10; game++)
+                {
+                    var position = Position.FromFen(fen);
+                    for (int ply = 0; ply < 120; ply++)
+                    {
+                        Assert.AreEqual(TunableEvaluation.Evaluate(position, weights, features),
+                                        TunableEvaluation.Evaluate(position, weights, features, cache), $"{features} {position.ToFen()}");
+                        var moves = position.GetLegalMoves();
+                        if (moves.Count == 0) break;
+                        position.MakeMove(moves[random.Next(moves.Count)]);
+                    }
+                }
+                Assert.Greater(cache.Hits, 0);
+            }
+        }
+
         [Test]
         public void WrongBishopWithRookPawnIsScaledDown()
         {

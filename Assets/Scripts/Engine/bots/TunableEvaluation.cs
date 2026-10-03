@@ -335,10 +335,36 @@ namespace ChessEngine
         public static int Evaluate(Position position, int[] weights, bool extended = false) =>
             Evaluate(position, weights, extended ? FeatureSet.Extended : FeatureSet.Basic);
 
-        public static int Evaluate(Position position, int[] weights, FeatureSet features)
+        public static int Evaluate(Position position, int[] weights, FeatureSet features) =>
+            Evaluate(position, weights, features, null);
+
+        // The same score; the pawn-only terms are taken from (and stored in) the pawn cache when one is given.
+        // The cache belongs to one weight array and feature set (one bot).
+        public static int Evaluate(Position position, int[] weights, FeatureSet features, PawnCache pawnCache)
         {
             var sink = new ScoreSink { Weights = weights };
-            Scan(position, ref sink, (int)features, out int phase, out int kingAttack, out bool loneKing, out int mopUp, out int egScale);
+            int level = (int)features;
+            if (pawnCache != null)
+            {
+                ulong whitePawns = position.Pieces(PieceType.Pawn, Side.White);
+                ulong blackPawns = position.Pieces(PieceType.Pawn, Side.Black);
+                int slot = pawnCache.Slot(whitePawns, blackPawns);
+                if (pawnCache.White[slot] != whitePawns || pawnCache.Black[slot] != blackPawns || !pawnCache.Filled[slot])
+                {
+                    var pawnSink = new ScoreSink { Weights = weights };
+                    CollectPawns(whitePawns, blackPawns, level, ref pawnSink);
+                    pawnCache.Store(slot, whitePawns, blackPawns, pawnSink.Mg0, pawnSink.Eg0, pawnSink.Mg1, pawnSink.Eg1);
+                }
+                else
+                {
+                    pawnCache.Hits++;
+                }
+                sink.Mg0 = pawnCache.Mg0[slot];
+                sink.Eg0 = pawnCache.Eg0[slot];
+                sink.Mg1 = pawnCache.Mg1[slot];
+                sink.Eg1 = pawnCache.Eg1[slot];
+            }
+            Scan(position, ref sink, level, pawnCache == null, out int phase, out int kingAttack, out bool loneKing, out int mopUp, out int egScale);
             int mg1 = sink.Mg1 + kingAttack + DangerPenalty(sink.DangerWhite) - DangerPenalty(sink.DangerBlack);
             int score = Blend(sink.Mg0, sink.Eg0, mg1, sink.Eg1, phase, egScale, loneKing) + mopUp;
             return position.SideToMove == Side.White ? score : -score;
@@ -356,7 +382,7 @@ namespace ChessEngine
             int[] coefficients = threadCoefficients ?? (threadCoefficients = new int[TermCount]);
             Array.Clear(coefficients, 0, TermCount);
             var sink = new CoefficientSink { Coefficients = coefficients, Trace = trace };
-            Scan(position, ref sink, (int)features, out trace.Phase, out trace.KingAttack, out trace.LoneKing, out trace.MopUp, out trace.EgScale);
+            Scan(position, ref sink, (int)features, true, out trace.Phase, out trace.KingAttack, out trace.LoneKing, out trace.MopUp, out trace.EgScale);
 
             for (int term = 0; term < TermCount; term++)
             {
@@ -368,7 +394,8 @@ namespace ChessEngine
 
         // Goes through the position once and reports every term's coefficient (White minus Black) to the sink
         // level: 0 = basic, 1 = extended, 2 = full feature set
-        private static void Scan<TSink>(Position position, ref TSink sink, int level, out int phase, out int kingAttack,
+        // withPawns: false when the pawn-only terms (CollectPawns) were already added from a pawn cache
+        private static void Scan<TSink>(Position position, ref TSink sink, int level, bool withPawns, out int phase, out int kingAttack,
                                         out bool loneKing, out int mopUp, out int egScale) where TSink : struct, ITermSink
         {
             ulong occupied = position.Occupied;
@@ -402,6 +429,7 @@ namespace ChessEngine
             }
             phase = Math.Min(phase, MaxPhase);
 
+            if (withPawns) CollectPawns(whitePawns, blackPawns, level, ref sink);
             CollectStructure(position, Side.White, whitePawns, blackPawns, level, ref sink);
             CollectStructure(position, Side.Black, blackPawns, whitePawns, level, ref sink);
             CollectShelter(position, Side.White, whitePawns, blackPawns, ref sink);
@@ -509,29 +537,12 @@ namespace ChessEngine
                 int square = Bits.PopLowest(ref pawns);
                 int file = Square.File(square), rank = Square.Rank(square);
                 int relativeRank = color == Side.White ? rank : 7 - rank;
-                bool passed = (ownPawns & Bitboards.ForwardFile[us][square]) == 0 && (enemyPawns & Bitboards.PassedPawnMask[us][square]) == 0;
-                if (passed)
-                    sink.Add(Passed + relativeRank, sign);
-                if ((ownPawns & Bitboards.AdjacentFiles[file]) == 0)
-                    sink.Add(Isolated, sign);
-
+                // (Passed, isolated, phalanx, supported and backward pawns depend on pawns only: CollectPawns)
                 if (level < 1) continue;
-
-                // Phalanx: an own pawn right beside it; supported: defended by an own pawn
-                if ((ownPawns & Bitboards.AdjacentFiles[file] & Bitboards.Ranks[rank]) != 0)
-                    sink.Add(Phalanx + relativeRank, sign);
-                if ((Bitboards.PawnAttacks[them][square] & ownPawns) != 0)
-                    sink.Add(Supported + relativeRank, sign);
-
-                // Backward: has neighbours, but all of them are further up the board, and the square in front
-                // is controlled by an enemy pawn - it can't safely advance and no pawn can come to defend it
+                bool passed = (ownPawns & Bitboards.ForwardFile[us][square]) == 0 && (enemyPawns & Bitboards.PassedPawnMask[us][square]) == 0;
                 int stop = square + forward;
-                ulong neighbours = ownPawns & Bitboards.AdjacentFiles[file];
-                ulong behindOrLevel = color == Side.White ? (2UL << (8 * rank + 7)) - 1 : ~((1UL << (8 * rank)) - 1);
-                if (neighbours != 0 && (neighbours & behindOrLevel) == 0
-                    && (Bitboards.PawnAttacks[us][stop] & enemyPawns) != 0)
-                    sink.Add(Backward, sign);
 
+                // Passed pawn details that depend on the pieces and kings
                 if (passed)
                 {
                     if ((position.Pieces((Side)them) & (1UL << stop)) != 0)
@@ -555,12 +566,6 @@ namespace ChessEngine
                     sink.Add((enemyPawns & file) == 0 ? RookOpenFile : RookSemiOpenFile, sign);
                 if (relativeRank == 6)
                     sink.Add(RookSeventh, sign);
-            }
-
-            for (int file = 0; file < 8; file++)
-            {
-                int count = Bits.PopCount(ownPawns & Bitboards.Files[file]);
-                if (count > 1) sink.Add(Doubled, sign * (count - 1));
             }
 
             ulong bishops = position.Pieces(PieceType.Bishop, color);
@@ -601,6 +606,101 @@ namespace ChessEngine
                 int square = Bits.PopLowest(ref storm);
                 int relativeRank = color == Side.White ? Square.Rank(square) : 7 - Square.Rank(square);
                 if (relativeRank >= 3) sink.Add(PawnStorm + relativeRank, sign);
+            }
+        }
+
+        // Every term that depends on the pawns only (so it can be cached by the pawn structure): passed, isolated,
+        // doubled pawns, and in the extended sets phalanx, supported and backward pawns and space
+        private static void CollectPawns<TSink>(ulong whitePawns, ulong blackPawns, int level, ref TSink sink)
+            where TSink : struct, ITermSink
+        {
+            Span<ulong> pawnAttacks = stackalloc ulong[2];
+            for (int side = 0; side < 2; side++)
+            {
+                ulong pawns = side == (int)Side.White ? whitePawns : blackPawns;
+                ulong attacks = 0;
+                while (pawns != 0) attacks |= Bitboards.PawnAttacks[side][Bits.PopLowest(ref pawns)];
+                pawnAttacks[side] = attacks;
+            }
+
+            for (int side = 0; side < 2; side++)
+            {
+                Side color = (Side)side;
+                int us = side, them = 1 - side;
+                int sign = color == Side.White ? 1 : -1;
+                int forward = color == Side.White ? 8 : -8;
+                ulong ownPawns = color == Side.White ? whitePawns : blackPawns;
+                ulong enemyPawns = color == Side.White ? blackPawns : whitePawns;
+
+                ulong pawns = ownPawns;
+                while (pawns != 0)
+                {
+                    int square = Bits.PopLowest(ref pawns);
+                    int file = Square.File(square), rank = Square.Rank(square);
+                    int relativeRank = color == Side.White ? rank : 7 - rank;
+                    if ((ownPawns & Bitboards.ForwardFile[us][square]) == 0 && (enemyPawns & Bitboards.PassedPawnMask[us][square]) == 0)
+                        sink.Add(Passed + relativeRank, sign);
+                    if ((ownPawns & Bitboards.AdjacentFiles[file]) == 0)
+                        sink.Add(Isolated, sign);
+
+                    if (level < 1) continue;
+
+                    // Phalanx: an own pawn right beside it; supported: defended by an own pawn
+                    if ((ownPawns & Bitboards.AdjacentFiles[file] & Bitboards.Ranks[rank]) != 0)
+                        sink.Add(Phalanx + relativeRank, sign);
+                    if ((Bitboards.PawnAttacks[them][square] & ownPawns) != 0)
+                        sink.Add(Supported + relativeRank, sign);
+
+                    // Backward: has neighbours, but all of them are further up the board, and the square in front
+                    // is controlled by an enemy pawn - it can't safely advance and no pawn can come to defend it
+                    int stop = square + forward;
+                    ulong neighbours = ownPawns & Bitboards.AdjacentFiles[file];
+                    ulong behindOrLevel = color == Side.White ? (2UL << (8 * rank + 7)) - 1 : ~((1UL << (8 * rank)) - 1);
+                    if (neighbours != 0 && (neighbours & behindOrLevel) == 0
+                        && (Bitboards.PawnAttacks[us][stop] & enemyPawns) != 0)
+                        sink.Add(Backward, sign);
+                }
+
+                for (int file = 0; file < 8; file++)
+                {
+                    int count = Bits.PopCount(ownPawns & Bitboards.Files[file]);
+                    if (count > 1) sink.Add(Doubled, sign * (count - 1));
+                }
+
+                if (level < 1) continue;
+
+                // Space: central squares on our side behind our own pawns that enemy pawns don't attack
+                                ulong behind = ownPawns;
+                if (side == (int)Side.White) { behind |= behind >> 8; behind |= behind >> 16; behind |= behind >> 32; }
+                else { behind |= behind << 8; behind |= behind << 16; behind |= behind << 32; }
+                ulong ourRanks = side == (int)Side.White
+                    ? Bitboards.Ranks[1] | Bitboards.Ranks[2] | Bitboards.Ranks[3]
+                    : Bitboards.Ranks[6] | Bitboards.Ranks[5] | Bitboards.Ranks[4];
+                ulong centre = Bitboards.Files[2] | Bitboards.Files[3] | Bitboards.Files[4] | Bitboards.Files[5];
+                sink.Add(Space, sign * Bits.PopCount(centre & ourRanks & behind & ~ownPawns & ~pawnAttacks[them]));
+            }
+        }
+
+        // Pawn-only part of the score per pawn structure (both sides' pawn bitboards), for one weight array.
+        // Pawns move rarely, so the same structure is evaluated again and again during a search.
+        public sealed class PawnCache
+        {
+            private const int SizeBits = 16;
+            public readonly ulong[] White = new ulong[1 << SizeBits];
+            public readonly ulong[] Black = new ulong[1 << SizeBits];
+            public readonly bool[] Filled = new bool[1 << SizeBits];
+            public readonly int[] Mg0 = new int[1 << SizeBits], Eg0 = new int[1 << SizeBits], Mg1 = new int[1 << SizeBits], Eg1 = new int[1 << SizeBits];
+            public long Hits;
+
+            public int Slot(ulong white, ulong black) =>
+                (int)(((white * 0x9E3779B97F4A7C15UL) ^ (black * 0xC2B2AE3D27D4EB4FUL)) >> (64 - SizeBits));
+
+            public void Store(int slot, ulong white, ulong black, int mg0, int eg0, int mg1, int eg1)
+            {
+                White[slot] = white;
+                Black[slot] = black;
+                Filled[slot] = true;
+                Mg0[slot] = mg0; Eg0[slot] = eg0; Mg1[slot] = mg1; Eg1[slot] = eg1;
             }
         }
 
@@ -747,7 +847,6 @@ namespace ChessEngine
                 ulong enemyZone = Bitboards.KingAttacks[enemyKing];
                 int weakSquares = Bits.PopCount(enemyZone & allAttacks[side] & ~(pawnAttacks[them] | pieceAttacks[them]));
                 sink.Add(WeakKingSquare, sign * weakSquares);
-
                 if (level >= 2)
                 {
                     // King danger from tunable inputs, counted with two or more attackers (as before)
@@ -783,16 +882,6 @@ namespace ChessEngine
                     sink.Add(ThreatByKing, sign * Bits.PopCount(Bitboards.KingAttacks[position.KingSquare((Side)side)] & kingTargets));
                 }
 
-                // Space: central squares on our side behind our own pawns that enemy pawns don't attack
-                ulong ownPawns = position.Pieces(PieceType.Pawn, (Side)side);
-                ulong behind = ownPawns;
-                if (side == (int)Side.White) { behind |= behind >> 8; behind |= behind >> 16; behind |= behind >> 32; }
-                else { behind |= behind << 8; behind |= behind << 16; behind |= behind << 32; }
-                ulong ourRanks = side == (int)Side.White
-                    ? Bitboards.Ranks[1] | Bitboards.Ranks[2] | Bitboards.Ranks[3]
-                    : Bitboards.Ranks[6] | Bitboards.Ranks[5] | Bitboards.Ranks[4];
-                ulong centre = Bitboards.Files[2] | Bitboards.Files[3] | Bitboards.Files[4] | Bitboards.Files[5];
-                sink.Add(Space, sign * Bits.PopCount(centre & ourRanks & behind & ~ownPawns & ~pawnAttacks[them]));
             }
         }
 

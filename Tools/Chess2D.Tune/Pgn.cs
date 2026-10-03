@@ -16,9 +16,13 @@ namespace Chess2D.Tune
         public string Result => Headers.TryGetValue("Result", out string r) ? r : "*";
         public string StartFen => Headers.TryGetValue("FEN", out string f) ? f : Position.StartFen;
 
-        public static IEnumerable<PgnGame> ReadAll(string path)
+        // path "-" reads standard input (e.g. "zstd -dc games.pgn.zst | Chess2D.Tune extract ... -").
+        // keep (optional) sees the headers only; games it rejects are skipped without parsing their moves.
+        public static IEnumerable<PgnGame> ReadAll(string path, Func<PgnGame, bool> keep = null)
         {
-            using var reader = new StreamReader(path, Encoding.UTF8);
+            using var reader = path == "-"
+                ? new StreamReader(Console.OpenStandardInput(), Encoding.UTF8, false, 1 << 20)
+                : new StreamReader(path, Encoding.UTF8, false, 1 << 20);
             PgnGame game = null;
             var movetext = new StringBuilder();
             string line;
@@ -29,8 +33,11 @@ namespace Chess2D.Tune
                 {
                     if (game != null && movetext.Length > 0)
                     {
-                        game.ParseMovetext(movetext.ToString());
-                        yield return game;
+                        if (keep == null || keep(game))
+                        {
+                            game.ParseMovetext(movetext.ToString());
+                            yield return game;
+                        }
                         game = null;
                         movetext.Clear();
                     }
@@ -45,7 +52,7 @@ namespace Chess2D.Tune
                     movetext.Append(line).Append(' ');
                 }
             }
-            if (game != null)
+            if (game != null && (keep == null || keep(game)))
             {
                 game.ParseMovetext(movetext.ToString());
                 yield return game;

@@ -14,6 +14,7 @@ namespace Chess2D.Tune
     // (score in centipawns from White's point of view; mates are written as +/-10000).
     // Several Stockfish processes work in parallel, each with one thread and a fixed node budget.
     // An existing output file is continued (positions already labelled are skipped), so the job can be stopped.
+    // Both files are streamed, so the size of the data set is limited only by the disk.
     public static class Label
     {
         public static int Run(Dictionary<string, string> options)
@@ -23,51 +24,98 @@ namespace Chess2D.Tune
             string stockfish = options.TryGetValue("stockfish", out string s) ? s : null;
             int workers = options.TryGetValue("threads", out string t) ? int.Parse(t) : 4;
             int nodes = options.TryGetValue("nodes", out string n) ? int.Parse(n) : 5000;
+            // Clearing Stockfish's hash before every position (ucinewgame) costs little alone but stops the
+            // processes from scaling (about 400 positions/s in total on 20 cores, against about 1500 without it).
+            // Keeping the hash only lets one unrelated position see another's entries.
+            bool clearHash = options.ContainsKey("clear-hash");
             if (stockfish == null || !File.Exists(stockfish))
             {
-                Console.WriteLine("--stockfish <path to stockfish.exe> is required");
+                Console.WriteLine("--stockfish <path to the Stockfish executable> is required");
                 return 1;
             }
 
-            string[] lines = File.ReadAllLines(input);
-            int done = File.Exists(output) ? File.ReadAllLines(output).Length : 0;
-            Console.WriteLine($"{lines.Length} positions, {done} already labelled; {workers} Stockfish processes, {nodes} nodes each");
+            long done = 0;
+            if (File.Exists(output))
+            {
+                TrimPartialLine(output);
+                using var existing = new StreamReader(output);
+                while (existing.ReadLine() != null) done++;
+            }
+            Console.WriteLine($"{done} positions already labelled; {workers} Stockfish processes, {nodes} nodes each" +
+                              (clearHash ? ", hash cleared before every position" : ""));
 
-            // Results come back out of order; they are written in input order through a small reorder buffer
-            var results = new ConcurrentDictionary<int, string>();
-            int next = done;
+            // Reader -> queue -> workers -> results by index -> writer (in input order)
+            var queue = new BlockingCollection<(long Index, string Line)>(workers * 64);
+            var results = new ConcurrentDictionary<long, string>();
+            long next = done;
             var watch = Stopwatch.StartNew();
-            using var writer = new StreamWriter(output, true, new UTF8Encoding(false));
+            using var writer = new StreamWriter(output, true, new UTF8Encoding(false), 1 << 20);
             object writeGate = new object();
 
-            Parallel.For(0, workers, new ParallelOptions { MaxDegreeOfParallelism = workers }, worker =>
+            var reader = Task.Run(() =>
             {
-                using var engine = new UciEngine(stockfish);
-                for (int i = done + worker; i < lines.Length; i += workers)
+                using var lines = new StreamReader(input, Encoding.UTF8, false, 1 << 20);
+                long index = 0;
+                string line;
+                while ((line = lines.ReadLine()) != null)
                 {
-                    string line = lines[i];
-                    string fen = line.Substring(0, line.LastIndexOf(';'));
-                    int score = engine.Evaluate(fen, nodes);
-                    results[i] = line + ";" + score.ToString(CultureInfo.InvariantCulture);
+                    if (index >= done) queue.Add((index, line));
+                    index++;
+                }
+                queue.CompleteAdding();
+            });
 
-                    lock (writeGate)
+            var tasks = new Task[workers];
+            for (int w = 0; w < workers; w++)
+            {
+                tasks[w] = Task.Factory.StartNew(() =>
+                {
+                    using var engine = new UciEngine(stockfish);
+                    foreach (var (index, line) in queue.GetConsumingEnumerable())
                     {
-                        while (results.TryRemove(next, out string ready))
+                        string fen = line.Substring(0, line.LastIndexOf(';'));
+                        int score = engine.Evaluate(fen, nodes, clearHash);
+                        results[index] = line + ";" + score.ToString(CultureInfo.InvariantCulture);
+
+                        lock (writeGate)
                         {
-                            writer.WriteLine(ready);
-                            next++;
-                            if (next % 50000 == 0)
+                            while (results.TryRemove(next, out string ready))
                             {
-                                writer.Flush();
-                                double rate = (next - done) / Math.Max(1, watch.Elapsed.TotalSeconds);
-                                Console.WriteLine($"  {next}/{lines.Length} ({rate:F0}/s, about {(lines.Length - next) / rate / 60:F0} min left)");
+                                writer.WriteLine(ready);
+                                next++;
+                                if (next % 100000 == 0)
+                                {
+                                    writer.Flush();
+                                    double rate = (next - done) / Math.Max(1, watch.Elapsed.TotalSeconds);
+                                    Console.WriteLine($"  {next} labelled ({rate:F0}/s, {watch.Elapsed:d\\.hh\\:mm\\:ss})");
+                                }
                             }
                         }
                     }
-                }
-            });
-            Console.WriteLine($"Done: {next} positions labelled -> {output}");
+                }, TaskCreationOptions.LongRunning);
+            }
+            Task.WaitAll(tasks);
+            reader.Wait();
+            Console.WriteLine($"Done: {next} positions labelled -> {output} ({watch.Elapsed:d\\.hh\\:mm\\:ss})");
             return 0;
+        }
+
+        // A job stopped while writing can leave half a line at the end; it is cut off and labelled again
+        private static void TrimPartialLine(string path)
+        {
+            using var file = new FileStream(path, FileMode.Open, FileAccess.ReadWrite);
+            long end = file.Length;
+            while (end > 0)
+            {
+                file.Position = end - 1;
+                if (file.ReadByte() == '\n') break;
+                end--;
+            }
+            if (end < file.Length)
+            {
+                Console.WriteLine($"Cut off an unfinished last line ({file.Length - end} bytes)");
+                file.SetLength(end);
+            }
         }
 
         // One Stockfish process talking UCI
@@ -93,9 +141,9 @@ namespace Chess2D.Tune
             }
 
             // Score after a search of `nodes` nodes, in centipawns from White's point of view
-            public int Evaluate(string fen, int nodes)
+            public int Evaluate(string fen, int nodes, bool clearHash)
             {
-                Send("ucinewgame");
+                if (clearHash) Send("ucinewgame");
                 Send("position fen " + fen);
                 Send("go nodes " + nodes);
                 int score = 0;

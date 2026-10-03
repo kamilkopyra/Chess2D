@@ -74,6 +74,8 @@ dotnet build Chess2D.Tune -c Release -o bin/tune
 
 # 1. quiet positions from PGN files: "FEN;result" (1 = White won, 0.5 = draw, 0 = Black won)
 bin/tune/Chess2D.Tune.exe extract --out tuning/positions.txt --per-game 8 --max 2000000 games.pgn more.pgn
+#    or straight from a compressed Lichess month ("-" = standard input), with filters:
+zstd -dc lichess_db_standard_rated_2026-09.pgn.zst | bin/tune/Chess2D.Tune.exe extract --out tuning/positions.txt --per-game 5 --max 100000000 --min-elo 1800 --low-elo-keep 0.25 --min-seconds 180 --dedup-bits 32 -
 
 # 2. (optional) a Stockfish evaluation for every position: "FEN;result;centipawns"
 bin/tune/Chess2D.Tune.exe label --data tuning/positions.txt --out tuning/labelled.txt --stockfish external/stockfish/.../stockfish.exe --threads 8 --nodes 5000
@@ -86,13 +88,44 @@ bin/tune/Chess2D.Tune.exe tune --data tuning/labelled.txt --epochs 2000 --lambda
 |---|---|
 | `extract --per-game` | quiet positions taken per game (positions of one game are strongly correlated) |
 | `extract --skip-plies` | opening plies skipped (default 16) |
-| `label --threads` / `--nodes` | Stockfish processes in parallel / nodes searched per position; the job can be stopped and resumed |
+| `extract --min-elo` / `--low-elo-keep` | games where both players have at least this rating are used; of the others only this fraction |
+| `extract --min-seconds` | games shorter than this estimated duration (base + 40 × increment, as Lichess counts it) are skipped; 180 = no bullet |
+| `extract --dedup-bits` | skip positions already written (Zobrist hash in a table of 2^bits bits; 32 = 512 MB) |
+| `label --threads` / `--nodes` | Stockfish processes in parallel / nodes searched per position; the files are streamed and the job can be stopped and resumed |
+| `label --clear-hash` | clear Stockfish's hash before every position (`ucinewgame`); off by default because it stops the processes from scaling (about 400 instead of 1300 positions/s on 20 threads) |
 | `tune --lambda` | target = lambda × game result + (1 − lambda) × Stockfish's expected score (only with labelled data) |
 | `tune --epochs` / `--rate` | gradient descent (Adam) steps and step size |
 
 A position is "quiet" when the side to move is not in check, has no capture that wins material (SEE > 0)
 and it isn't a lone-king endgame (the mop-up terms are not tuned). Copy the resulting `TunedWeights.cs`
 to `Assets/Scripts/Engine/bots/` and test the bot that uses it with an SPRT match.
+
+## Producing training data on another machine (`worker/`)
+
+The scripts in `Tools/worker` run the whole data job unattended on a Linux machine: download one Lichess month
+(checked against the published SHA-256), `extract`, `label`, compress. Every step is resumable, and a crontab
+`@reboot` entry starts it again after a power cut.
+
+```bash
+# on Windows: a self-contained Linux build of the tool (no .NET needed on the worker)
+dotnet publish Chess2D.Tune -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -o bin/linux
+
+# on the worker: ~/chess/bin/Chess2D.Tune, ~/chess/bin/stockfish (stockfish-linux-x86-64-universal),
+# the scripts in ~/chess, then
+echo 6 > ~/chess/threads.txt        # Stockfish processes (physical cores + a little)
+bash ~/chess/run.sh                  # starts pipeline.sh (tmux "nnue") and the status page (tmux "web")
+(crontab -l; echo "@reboot sleep 60 && bash $HOME/chess/run.sh") | crontab -
+```
+
+| Script | Purpose |
+|---|---|
+| `pipeline.sh` | download → extract → label → compress; set the month and the extract filters at the top |
+| `run.sh` | starts the pipeline and the status page in tmux sessions unless they already run |
+| `status.sh` | progress of the current step, time left, temperature, free disk |
+| `web.sh` | status page refreshed every minute, served only on the Tailscale address (`http://<tailscale ip>:8080`) |
+
+Remote access over [Tailscale](https://tailscale.com) works from any network. An i7-8565U laptop labels about
+300 positions/s (100M positions in about 4 days).
 
 ## Using the engine in a GUI
 
