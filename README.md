@@ -2,7 +2,8 @@
 
 A 2D chess game built in Unity, together with a chess engine written from scratch in plain C#.
 It started as a learning exercise (a two-player chess game) and grew into a series of bots, from a
-random-move player (v0) to a bitboard alpha-beta engine with a Texel-tuned evaluation (v25).
+random-move player (v0) to a bitboard alpha-beta engine with a Texel-tuned evaluation (v25), then made
+faster and pruned harder (v26+).
 
 ![Main window](gallery/game1.png)
 
@@ -22,7 +23,7 @@ random-move player (v0) to a bitboard alpha-beta engine with a Texel-tuned evalu
 
 - Full chess rules: castling, en passant, promotion, check, checkmate, stalemate, the 50-move rule,
   threefold repetition and insufficient material
-- Play against another person on the same computer or against any bot version (v0 … v25), as White,
+- Play against another person on the same computer or against any bot version (v0 … v29), as White,
   Black or a random colour. Strength settings: search depth (fixed-depth bots) or time per move (bots v11+)
 - The bot thinks in the background, the game stays responsive; the depth it reached is shown next to its name
 - Premoves (queued while the bot is thinking, played right after its move)
@@ -113,10 +114,23 @@ version that stopped once the result was statistically clear (see [How the bots 
 | **v24** | The same features re-tuned on 2.5M positions with better targets: half the game result, half Stockfish's evaluation of the position | SPRT +50 ± 37 |
 | **v25** | Extended feature set, ~1300 tuned weights: tempo, mobility per number of squares, a king danger table, safe checks, pawn storms, weak squares around the king, backward / phalanx / supported pawns, passed pawn details (blocked, free path, king distances, rook behind), bad and trapped bishops, trapped rooks, minor pieces behind pawns, space, scale-down of drawish endgames (opposite-coloured bishops, no pawns and less than a rook up) | SPRT +106 ± 60 (stopped after 91 games, so the exact number is likely too high) |
 
+### Speed and pruning (v26 – v29)
+
+From here on a version is tested against the version it is built on (named in the table), with SPRT 0 / +15.
+
+| Version | What was added | Result |
+|---|---|---|
+| **v26** | v25 made faster without changing its play: an evaluation cache (position hash → score) and a pawn cache (the pawn-only terms stored per pawn structure); about 1.3× faster, identical search tree | SPRT +57 ± 31 vs v25 |
+| **v27** | v26 + the improving flag of v28 | SPRT vs v26 pending |
+| **v28** | v25 + "improving": the static score is compared with the one two plies earlier; when the position is getting worse, LMP keeps half as many quiet moves and LMR reduces one ply more, when it is improving reverse futility cuts with a smaller margin; about 1.5× fewer nodes to the same depth | SPRT +26 ± 19 vs v25 |
+| **v29** | v26 with the full feature set (tunable king danger inputs, threats by each piece type, pawn-dependent knight / rook values, rook pair, king distance to pawns), which lost as a v25 variant only because of its cost | SPRT vs v26 pending |
+
 Experiments that did **not** make it (kept for reference, not in the code):
 contempt (scores draws slightly below 0: fewer draws, but ±0 Elo), quiet checks in quiescence (±0),
 a bucketed transposition table with ageing and packed entries (−31), the full feature set with a fully tunable
-king danger and more threats / material terms (−15; the extra evaluation cost outweighed the gain).
+king danger and more threats / material terms (−15 on top of v25; retried with the caches as v29), lazy
+evaluation in quiescence (skip the full score when material and piece-square tables alone are 400 cp outside the
+window: −6 ± 20, the time saved was too small).
 
 ## Strength (Elo estimates)
 
@@ -135,12 +149,30 @@ Ratings are on the **Stockfish `UCI_Elo` scale** (Stockfish 19 with limited stre
 | v16 | Stockfish 2400 | 46-44-10 | ≈ 2405 |
 | v17 | Stockfish 2400 | 48-41-11 | ≈ 2425 |
 | v18 | Stockfish 2400 | 48-45-7 | ≈ 2410 |
-| v19 – v25 | not measured against Stockfish yet | | see below |
 
-v19 – v25 were only tested against their predecessors. Head-to-head gains overstate the gain against other
-engines: from v14 to v18 the head-to-head SPRTs added up to about +300, while against Stockfish the gain was
-about +120. Applying a similar discount to the head-to-head gains of v19 – v25 (about +500 in total) puts
-**v25 roughly in the 2550 – 2700 range** on this scale. This is an estimate until v25 plays Stockfish 2400 / 2600.
+From v19 on the matches were played with fastchess and the balanced `8moves_v3` openings (each opening twice,
+colours reversed) instead of cutechess with the bots' own book:
+
+| Version | Opponent | Score (W-L-D) | Estimate |
+|---|---|---|---|
+| v18 (bridge to the old setup) | Stockfish 2400 | 58-37-5 | ≈ 2475 |
+| v19 | Stockfish 2600 | 42-44-14 | ≈ 2595 |
+| v20 | Stockfish 2600 | 49-34-17 | ≈ 2655 |
+| v21 | Stockfish 2600 | 45-44-11 | ≈ 2605 |
+| v22 | Stockfish 2600 | 57-25-18 | ≈ 2715 |
+| v23 | Stockfish 2600 | 64-22-14 | ≈ 2755 |
+| v24 | Stockfish 2600 | 60-21-19 | ≈ 2745 |
+| v25 (250 games) | Stockfish 2600 | 173-44-33 | ≈ 2800 (± 46) |
+| v25 (250 games) | Stockfish 2800 | 60-107-83 | ≈ 2735 (± 36) |
+
+**v25 is about 2750 – 2760** on this scale (both v25 matches combined, weighted by their error). The match
+against the closer opponent (Stockfish 2800) is the more reliable one: the `UCI_Elo` scale is not perfectly
+linear, so a result far from 50% against a weaker setting overstates the rating a little.
+
+The v18 bridge (≈ 2475 here, ≈ 2410 in the old setup) is within one match's error, so the two tables are
+roughly comparable. Neighbouring versions (v19 – v21, v23 – v24) are closer to each other than one match can
+separate; the head-to-head SPRTs are the better guide for those steps. Overall v18 → v25 gained about +300
+against Stockfish.
 
 ## How the bots are tested
 
@@ -148,8 +180,9 @@ All matches are played outside Unity through the UCI front-end (`Tools/Chess2D.U
 [cutechess-cli](https://github.com/cutechess/cutechess) or [fastchess](https://github.com/Disservin/fastchess),
 driven by `Tools/match.ps1`. Details and all options are in [Tools/README.md](Tools/README.md).
 
-- **SPRT** (sequential probability ratio test, hypotheses 0 / +30 Elo, 5% error each way): a new version plays
-  the previous one until it is statistically clear whether it is at least ~30 Elo stronger (H1) or not stronger (H0).
+- **SPRT** (sequential probability ratio test, 5% error each way): a new version plays the previous one until it is
+  statistically clear whether it is stronger (H1) or not (H0). Hypotheses 0 / +30 Elo up to v25; from v26 on
+  0 / +15, which detects smaller gains at the cost of longer tests (up to 2000 games).
 - **Openings:** with fastchess every game pair starts from the same position of the `8moves_v3` book (each side
   plays it with both colours), the bots' own book is switched off; this removes most of the luck of the opening.
 - **Time control:** 20+0.2 for version-vs-version tests, 60+0.6 against Stockfish (its `UCI_Elo` is calibrated there).
@@ -190,7 +223,7 @@ Assets/
 │   │   ├── Position.cs         # board, bitboards, make/unmake, move generation, FEN
 │   │   ├── Bitboards.cs, Bits.cs, Attacks.cs, Zobrist.cs, Types.cs
 │   │   ├── See.cs, Perft.cs, OpeningBook.cs
-│   │   └── bots/               # Bot_v0 … Bot_v25, Evaluation, TunableEvaluation, tuned weights, BotFactory
+│   │   └── bots/               # Bot_v0 … Bot_v29, Evaluation, TunableEvaluation, tuned weights, BotFactory
 │   ├── PieceMover.cs           # input, moves, bot opponent (background search), premoves, game end
 │   ├── PieceView.cs            # a piece on the board (sprite, animation)
 │   ├── BoardCreator.cs         # board, coordinates, themes, piece skins
