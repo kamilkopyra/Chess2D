@@ -11,6 +11,7 @@ faster and pruned harder (v26+).
 
 - [The game](#the-game)
 - [The engine](#the-engine)
+- [How the engine thinks](#how-the-engine-thinks)
 - [Bot versions](#bot-versions)
 - [Strength (Elo estimates)](#strength-elo-estimates)
 - [How the bots are tested](#how-the-bots-are-tested)
@@ -66,6 +67,149 @@ same code runs in the game, in the console tools (UCI front-end, tuner) and in t
 | `OpeningBook` | Opening book built from the Lichess Elite Database (2025-11, 280k games), weighted random moves |
 | `Perft` | Move-generator correctness check against known node counts |
 | `bots/Bot_vN` | One class per bot version; `BotFactory` finds them by name, so a new version is just a new file |
+
+## How the engine thinks
+
+A description of every technique the engine uses, in the form it has in the current best version (v26),
+with the version that introduced it. Numbers in the text are the actual values in the code.
+
+### Board representation
+
+- **Bitboards (v19).** The board is stored as 64-bit integers, one bit per square: one per piece type and one
+  per colour. "All white knights" is a single number, "squares attacked by a pawn" is a shift, and questions
+  like "is anything between these two squares" are one AND. A 64-square array (mailbox) is kept in sync for
+  "what stands on this square".
+- **Magic bitboards (v19).** Rook and bishop moves depend on the pieces in the way. For each square, the
+  blocking pieces are multiplied by a precomputed "magic" number, and the top bits of the result index a table
+  holding the attacked squares for exactly that set of blockers. A slider's moves cost one multiplication and
+  one table lookup. The queen is a rook plus a bishop.
+- **Legal move generation (v17, on bitboards since v19).** Checks and pins are found once per position. A
+  pinned piece may only move along the line of its pin, and in check only moves that capture the checker,
+  block the check or move the king are generated. Every generated move is legal; no "make the move and see
+  whether the king is attacked" is needed. Quiescence search uses a cheaper captures-only generator and checks
+  legality after making the capture.
+- **Zobrist hashing (v6).** Every (piece, square), the side to move, castling rights and the en passant file
+  have a random 64-bit number. The position's hash is the XOR of those that apply, and it is updated
+  incrementally when a move is made. It identifies positions in the transposition table, the evaluation cache
+  and repetition detection.
+- **Make / unmake.** Moves are made and taken back on one board with an undo stack instead of copying it.
+
+### Search
+
+- **Negamax (v2).** The engine looks ahead a number of plies (half-moves). A position's score is always seen
+  from the side to move, so the score of a move is minus the opponent's best score after it.
+- **Alpha-beta pruning (v3).** The search keeps a window: alpha (the score we are already sure of) and beta (the
+  score the opponent will not allow). As soon as one reply shows that a move is worse than an alternative found
+  earlier, the remaining replies are not searched (a cutoff). Same result as a full search, far fewer positions:
+  with good move ordering it searches about twice as deep in the same time.
+- **Iterative deepening (v5) and time management (v11).** Depth 1, then 2, 3... until the time for the move
+  runs out. Each iteration orders moves with what the previous one learned, so the repetition costs little.
+  The clock is checked every 2048 nodes; an unfinished iteration is thrown away and the move of the last
+  complete one is played. A new depth is not started when more than half of the time is gone (it would not
+  finish). When several moves share the best score, one of them is picked at random.
+- **Transposition table (v6).** The same position is often reached by different move orders. 2^20 entries
+  (about 24 MB) keyed by the Zobrist hash store the score, the depth it was searched to, the kind of score
+  (exact, at least, at most: alpha-beta often only proves a bound) and the best move. A stored score is reused
+  when it was searched at least as deep as needed now; the best move is tried first in any case. Newer entries
+  replace older ones, and the table is kept between moves.
+- **Principal variation search (v18).** The first move (expected to be the best thanks to ordering) is searched
+  with the full window; every other move only with a null window (alpha, alpha + 1), which answers "is it better
+  than alpha?" much faster. Only when the answer is yes is the move searched again with the full window.
+- **Quiescence search (v7).** At depth 0 the position is not evaluated straight away when captures are pending:
+  only captures and promotions are searched until the position is quiet, otherwise the engine would evaluate
+  the middle of an exchange (the horizon effect). The side to move may also "stand pat" (take the static score
+  without capturing). In check, every legal reply is searched instead.
+- **Check extension (v13).** In check the remaining depth grows by one ply: checks are forcing and often lead
+  to tactics that a fixed depth would cut in half.
+- **Draws and mates (v8, v12).** A repeated position or the 50-move rule scores 0 inside the search, so the
+  engine avoids draws when ahead and looks for them when behind. A mate scores `1 000 000 − distance in plies`,
+  so a faster mate is preferred (and a slower defeat); mate scores are stored in the table relative to the
+  node so they stay correct when the position is reached at another distance.
+
+### Move ordering
+
+Alpha-beta prunes most when the best move is searched first. Moves are sorted in this order:
+
+1. the best move of the previous iteration (principal variation, v5);
+2. the transposition table's best move (v6);
+3. good captures, those that don't lose material according to SEE, and promotions; among them "most valuable
+   victim, least valuable attacker" (MVV-LVA, v4): pawn takes queen before queen takes pawn;
+4. two killer moves per ply (v5): quiet moves that caused a cutoff in a sibling position at the same ply;
+5. the other quiet moves by history (v14): every quiet move that causes a cutoff gets `depth²` points for its
+   (side, from, to); all values are halved at every new move and whenever one gets too large;
+6. losing captures (negative SEE, v20), the worst last.
+
+**Static exchange evaluation (SEE, v20)** plays out all captures on one square in "least valuable attacker
+first" order, including pieces behind others (x-rays), and returns the material result without making any
+move. It sorts captures, and in quiescence the losing ones are not searched at all.
+
+### Pruning and reductions
+
+These skip or shorten branches that are very unlikely to change the result. Null move, reverse futility,
+futility and late move pruning are never used in check, on the principal variation or when the window is near
+a mate score; LMR is not used in check.
+
+- **Null move pruning (v13).** "Let the opponent move twice": the side to move passes and the position is
+  searched 2 plies shallower (R = 2, from depth 3, only when the static score is already at least beta). If we are still above beta after giving a free move, a real
+  move will almost certainly be too, and the node is cut. Not used with only king and pawns (zugzwang, where
+  passing would be the best move, is common there) or twice in a row.
+- **Reverse futility pruning (v18).** Near the leaves (depth ≤ 3): if the static score minus 120 × depth is
+  still at least beta, the node returns beta without searching.
+- **Futility pruning (v18).** At depth 1 and 2: if the static score plus 150 (depth 1) or 300 (depth 2) can't
+  reach alpha, quiet moves that don't give check are skipped; captures and checks are still searched.
+- **Late move pruning (LMP, v21).** At depth ≤ 3, after 3 + depth² quiet moves (4, 7, 12) have been searched,
+  the remaining quiet moves that don't give check and aren't killers are skipped: thanks to ordering, a late quiet move is rarely
+  the best one.
+- **Late move reductions (LMR, v14).** From the 4th move on, at depth ≥ 3, quiet moves (not killers, not
+  checks) are searched 1 ply shallower, 2 plies from the 9th move at depth ≥ 6. If such a move unexpectedly
+  beats alpha, it is searched again at full depth.
+- **Delta pruning (v18).** In quiescence, a capture is skipped when even winning the captured piece plus a
+  200 margin wouldn't bring the score up to alpha.
+- **Improving (v27, not in v26).** The static score is compared with the one two plies earlier (the same side
+  to move). When the position is getting worse, LMP keeps half as many quiet moves and LMR reduces one ply
+  more; when it is improving, reverse futility cuts with a smaller margin.
+
+### Evaluation
+
+The static evaluation scores a quiet position in centipawns (100 = one pawn) from the side to move's view.
+
+- **Tapered evaluation (v10).** Every term has a middlegame and an endgame value. The game phase is 0 – 24 from
+  the material on the board (knight and bishop 1, rook 2, queen 4) and the two scores are blended by it, so
+  e.g. the king wants shelter in the middlegame and the centre in the endgame without a sudden switch.
+- **Material and piece-square tables (v10).** A value per piece and a bonus or penalty for every piece on
+  every square (knights in the centre, pawns advancing, the king behind its pawns).
+- **Pawn structure (v15, v25).** Passed pawns by rank; isolated, doubled and backward pawns; pawns side by side
+  (phalanx) and defended pawns; passed pawn details: blocked, free path to promotion, distance of both kings,
+  a rook behind it.
+- **Pieces (v15, v22, v25).** Bishop pair, bad bishops (own pawns on their colour), trapped bishops and rooks,
+  rooks on open and half-open files and on the 7th rank, knight outposts (protected by a pawn, unreachable for
+  enemy pawns), minor pieces behind pawns, mobility (safe squares) with a separate value for each number of
+  squares per piece type, space behind the own pawn chain, a bonus for having the move (tempo).
+- **King safety (v16, v22, v25).** Pawn shelter in front of the king and open files next to it; enemy pawn
+  storms; weak squares around the king; attacks on the king zone added up into attack units and turned into
+  a penalty through a tuned 100-entry table (only with two or more attackers); squares from which each enemy
+  piece type could give a safe check.
+- **Threats (v22).** A pawn attacking a piece, minor pieces attacking rooks or queens, undefended pieces under
+  attack.
+- **Drawish endgames (v25).** The endgame part is scaled down with opposite-coloured bishops (to 1/2 without
+  other pieces, 3/4 with them) and when the stronger side has no pawns and is less than a rook up (to 1/4).
+- **Mop-up (v12).** With at least 400 points more material (e.g. a rook) against a side without pawns, a bonus drives the losing king to
+  the edge (10 per square of distance from the centre) and brings the winning king closer (4 per square of
+  distance saved), so the engine can mate with K+Q or K+R against K. Against a lone king the activity terms
+  are left out, they only distract from the mating plan.
+- **Texel tuning (v23 – v25).** All ~1300 numbers above live in one weight array and were fitted to 2.5M
+  positions from real games (see [Tuning the evaluation](#tuning-the-evaluation)).
+
+### Speed
+
+- **Evaluation cache (v26).** 2^18 entries: position hash → score. With iterative deepening and transpositions
+  the same positions are evaluated again and again; each is computed once.
+- **Pawn cache (v26).** 2^16 entries keyed by both sides' pawn bitboards: the pawn-only terms (passed, isolated,
+  doubled, backward pawns and the like, space). Pawns move rarely, so most evaluations find their structure.
+- **No allocations in the search (v17).** Move lists and score arrays are allocated once per ply and reused.
+- **Opening book (v9).** In the game the first moves come from a book built from the Lichess Elite Database
+  (280k games), picked at random weighted by how often they were played. Engine tests with fastchess switch it
+  off and start from fixed opening positions instead.
 
 ## Bot versions
 
